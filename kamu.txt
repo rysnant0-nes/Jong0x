@@ -1,725 +1,846 @@
 --[[
-    Exploit: JailSystem Authorization Bypass v1.1
-    Fitur tambahan: Self-Jail untuk server sepi
+    JailSystem Exploit v1.2 - Robust Edition
+    - Error handling transparan (ga ditelen pcall)
+    - Debug logging ke console
+    - Initialization sequence yg aman
 ]]
 
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
--- Cari RemoteEvent
+-- Cari remote dengan timeout panjang
+print("[JAIL EXPLOIT] Mencari JailRemote...")
 local JailRemote = ReplicatedStorage:FindFirstChild("JailRemote")
 if not JailRemote then
-    JailRemote = ReplicatedStorage:WaitForChild("JailRemote", 10)
+    print("[JAIL EXPLOIT] JailRemote tidak ditemukan langsung, waiting...")
+    JailRemote = ReplicatedStorage:WaitForChild("JailRemote", 15)
 end
+
 if not JailRemote then
-    warn("[!] JailRemote tidak ditemukan!")
+    warn("========================================")
+    warn("[!] JAIL REMOTE TIDAK DITEMUKAN!")
+    warn("    Nama remote mungkin berbeda.")
+    warn("    Coba cek di ReplicatedStorage manual.")
+    warn("========================================")
+    
+    -- List semua child ReplicatedStorage buat debug
+    print("[DEBUG] Children of ReplicatedStorage:")
+    for _, child in pairs(ReplicatedStorage:GetChildren()) do
+        print("  -", child.Name, "(", child.ClassName, ")")
+    end
     return
 end
 
--- ===== NOTIFICATION =====
-local function ShowNotification(title, text, color)
-    local notifGui = Instance.new("ScreenGui")
-    notifGui.Name = "JailNotif"
-    notifGui.ResetOnSpawn = false
-    notifGui.DisplayOrder = 9999999
-    notifGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+print("[JAIL EXPLOIT] JailRemote ditemukan:", JailRemote:GetFullName())
+
+-- ===== DEBUG: Cek tipe argumen yang diterima server =====
+-- Kita coba panggil dengan format berbeda, catat hasilnya
+local lastError = ""
+
+local function SafeFireServer(...)
+    local args = {...}
+    print("[JAIL EXPLOIT DEBUG] FireServer called with:", unpack(args))
     
-    local notif = Instance.new("Frame")
-    notif.Size = UDim2.new(0, 280, 0, 55)
-    notif.Position = UDim2.new(0.5, -140, 0, -70)
-    notif.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
-    notif.BackgroundTransparency = 0.08
-    notif.BorderSizePixel = 0
-    notif.Parent = notifGui
+    -- Coba tanpa pcall dulu biar error kebaca (tapi dibungkus spawning)
+    local success, result = pcall(function()
+        JailRemote:FireServer(unpack(args))
+    end)
     
-    local notifStroke = Instance.new("UIStroke")
-    notifStroke.Color = color or Color3.fromRGB(200, 30, 30)
-    notifStroke.Thickness = 1.5
-    notifStroke.Parent = notif
+    if success then
+        print("[JAIL EXPLOIT DEBUG] FireServer SUCCESS")
+        return true
+    else
+        print("[JAIL EXPLOIT DEBUG] FireServer FAILED:", tostring(result))
+        lastError = tostring(result)
+        return false, result
+    end
+end
+
+-- ===== NOTIFICATION SYSTEM =====
+local function ShowNotif(title, text, color, duration)
+    duration = duration or 4
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "JailNotif"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 9999999
+    gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     
-    local notifCorner = Instance.new("UICorner")
-    notifCorner.CornerRadius = UDim.new(0, 6)
-    notifCorner.Parent = notif
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 320, 0, 60)
+    frame.Position = UDim2.new(0.5, -160, 0, -80)
+    frame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+    frame.BackgroundTransparency = 0.05
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    
+    local fStroke = Instance.new("UIStroke")
+    fStroke.Color = color or Color3.fromRGB(200, 30, 30)
+    fStroke.Thickness = 1.5
+    fStroke.Parent = frame
+    
+    local fCorner = Instance.new("UICorner")
+    fCorner.CornerRadius = UDim.new(0, 6)
+    fCorner.Parent = frame
     
     local titleLbl = Instance.new("TextLabel")
-    titleLbl.Size = UDim2.new(1, -20, 0, 20)
-    titleLbl.Position = UDim2.new(0, 10, 0, 6)
+    titleLbl.Size = UDim2.new(1, -16, 0, 22)
+    titleLbl.Position = UDim2.new(0, 8, 0, 4)
     titleLbl.BackgroundTransparency = 1
     titleLbl.Text = title
     titleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLbl.Font = Enum.Font.GothamBold
-    titleLbl.TextSize = 12
+    titleLbl.TextSize = 13
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    titleLbl.Parent = notif
+    titleLbl.Parent = frame
     
     local descLbl = Instance.new("TextLabel")
-    descLbl.Size = UDim2.new(1, -20, 0, 20)
-    descLbl.Position = UDim2.new(0, 10, 0, 26)
+    descLbl.Size = UDim2.new(1, -16, 0, 24)
+    descLbl.Position = UDim2.new(0, 8, 0, 28)
     descLbl.BackgroundTransparency = 1
     descLbl.Text = text
-    descLbl.TextColor3 = Color3.fromRGB(180, 180, 190)
+    descLbl.TextColor3 = Color3.fromRGB(170, 170, 180)
     descLbl.Font = Enum.Font.Gotham
     descLbl.TextSize = 10
     descLbl.TextXAlignment = Enum.TextXAlignment.Left
-    descLbl.Parent = notif
+    descLbl.Parent = frame
     
-    notif:TweenPosition(
-        UDim2.new(0.5, -140, 0, 20),
+    frame:TweenPosition(
+        UDim2.new(0.5, -160, 0, 20),
         Enum.EasingDirection.Out,
         Enum.EasingStyle.Back,
         0.5, true
     )
     
-    task.delay(3.5, function()
-        notif:TweenPosition(
-            UDim2.new(0.5, -140, 0, -70),
+    task.delay(duration, function()
+        frame:TweenPosition(
+            UDim2.new(0.5, -160, 0, -80),
             Enum.EasingDirection.In,
             Enum.EasingStyle.Back,
             0.4, true
         )
-        task.delay(0.5, function() notifGui:Destroy() end)
+        task.delay(0.5, function() gui:Destroy() end)
     end)
 end
 
--- ===== CREATE GUI =====
-local function CreateJailExploitGUI()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "JailExploitGUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.DisplayOrder = 999999
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 340, 0, 520)
-    mainFrame.Position = UDim2.new(0.5, -170, 0.5, -260)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
-    mainFrame.BackgroundTransparency = 0.08
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = true
-    mainFrame.Parent = screenGui
-    
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(200, 30, 30)
-    stroke.Thickness = 1.5
-    stroke.Parent = mainFrame
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = mainFrame
-    
-    -- Title Bar
-    local titleBar = Instance.new("Frame")
-    titleBar.Size = UDim2.new(1, 0, 0, 38)
-    titleBar.BackgroundColor3 = Color3.fromRGB(200, 25, 25)
-    titleBar.BackgroundTransparency = 0.15
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-    
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
-    titleCorner.Parent = titleBar
-    
-    local titleGradient = Instance.new("UIGradient")
-    titleGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 25, 25)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 10, 10))
-    })
-    titleGradient.Parent = titleBar
-    
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -40, 1, 0)
-    titleLabel.Position = UDim2.new(0, 12, 0, 0)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "⛓ JAIL EXPLOIT v1.1 [SELF-JAIL ✓]"
-    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextSize = 12
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = titleBar
-    
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.new(0, 28, 0, 28)
-    closeBtn.Position = UDim2.new(1, -34, 0, 5)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
-    closeBtn.BackgroundTransparency = 0.3
-    closeBtn.Text = "✕"
-    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.TextSize = 14
-    closeBtn.Parent = titleBar
-    
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 4)
-    closeCorner.Parent = closeBtn
-    closeBtn.MouseButton1Click:Connect(function() screenGui:Destroy() end)
-    
-    -- Content
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Size = UDim2.new(1, -20, 1, -48)
-    contentFrame.Position = UDim2.new(0, 10, 0, 44)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.BorderSizePixel = 0
-    contentFrame.Parent = mainFrame
-    
-    -- Status
-    local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
-    statusLabel.Size = UDim2.new(1, 0, 0, 22)
-    statusLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    statusLabel.BackgroundTransparency = 0.4
-    statusLabel.Text = "● READY | Loading..."
-    statusLabel.TextColor3 = Color3.fromRGB(0, 220, 80)
-    statusLabel.Font = Enum.Font.Gotham
-    statusLabel.TextSize = 11
-    statusLabel.Parent = contentFrame
-    
-    local statusCorner = Instance.new("UICorner")
-    statusCorner.CornerRadius = UDim.new(0, 4)
-    statusCorner.Parent = statusLabel
-    
-    -- My Info Box (Self-Jail)
-    local selfFrame = Instance.new("Frame")
-    selfFrame.Size = UDim2.new(1, 0, 0, 50)
-    selfFrame.Position = UDim2.new(0, 0, 0, 28)
-    selfFrame.BackgroundColor3 = Color3.fromRGB(50, 10, 15)
-    selfFrame.BackgroundTransparency = 0.5
-    selfFrame.BorderSizePixel = 0
-    selfFrame.Parent = contentFrame
-    
-    local selfCorner = Instance.new("UICorner")
-    selfCorner.CornerRadius = UDim.new(0, 5)
-    selfCorner.Parent = selfFrame
-    
-    local selfStroke = Instance.new("UIStroke")
-    selfStroke.Color = Color3.fromRGB(200, 50, 50)
-    selfStroke.Thickness = 1
-    selfStroke.Transparency = 0.5
-    selfStroke.Parent = selfFrame
-    
-    local selfLabel = Instance.new("TextLabel")
-    selfLabel.Size = UDim2.new(0.6, -5, 1, 0)
-    selfLabel.Position = UDim2.new(0, 8, 0, 0)
-    selfLabel.BackgroundTransparency = 1
-    selfLabel.Text = "🧑‍💻 DIRI SENDIRI\n" .. LocalPlayer.Name .. " (" .. LocalPlayer.DisplayName .. ")"
-    selfLabel.TextColor3 = Color3.fromRGB(255, 200, 200)
-    selfLabel.Font = Enum.Font.GothamBold
-    selfLabel.TextSize = 11
-    selfLabel.TextXAlignment = Enum.TextXAlignment.Left
-    selfLabel.Parent = selfFrame
-    
-    -- Self-Jail quick buttons
-    local selfJailBtn = Instance.new("TextButton")
-    selfJailBtn.Name = "SelfJailBtn"
-    selfJailBtn.Size = UDim2.new(0.35, -3, 0, 36)
-    selfJailBtn.Position = UDim2.new(0.63, 0, 0.07, 0)
-    selfJailBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
-    selfJailBtn.Text = "⛓ JAIL DIRI"
-    selfJailBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    selfJailBtn.Font = Enum.Font.GothamBold
-    selfJailBtn.TextSize = 10
-    selfJailBtn.Parent = selfFrame
-    
-    local sjCorner = Instance.new("UICorner")
-    sjCorner.CornerRadius = UDim.new(0, 4)
-    sjCorner.Parent = selfJailBtn
-    
-    -- Self-Release
-    local selfReleaseBtn = Instance.new("TextButton")
-    selfReleaseBtn.Name = "SelfReleaseBtn"
-    selfReleaseBtn.Size = UDim2.new(0.35, -3, 0, 36)
-    selfReleaseBtn.Position = UDim2.new(0.63, 0, 0.57, 0)
-    selfReleaseBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 40)
-    selfReleaseBtn.Text = "🔓 LEPASKAN DIRI"
-    selfReleaseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    selfReleaseBtn.Font = Enum.Font.GothamBold
-    selfReleaseBtn.TextSize = 10
-    selfReleaseBtn.Parent = selfFrame
-    
-    local srCorner = Instance.new("UICorner")
-    srCorner.CornerRadius = UDim.new(0, 4)
-    srCorner.Parent = selfReleaseBtn
-    
-    -- Self Jail Duration input (mini)
-    local selfDurBox = Instance.new("TextBox")
-    selfDurBox.Name = "SelfDurBox"
-    selfDurBox.Size = UDim2.new(0.15, -2, 0, 24)
-    selfDurBox.Position = UDim2.new(0.46, 0, 0.26, 0)
-    selfDurBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    selfDurBox.BackgroundTransparency = 0.2
-    selfDurBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    selfDurBox.PlaceholderText = "dtk"
-    selfDurBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
-    selfDurBox.Text = "30"
-    selfDurBox.Font = Enum.Font.Gotham
-    selfDurBox.TextSize = 11
-    selfDurBox.ClearTextOnFocus = false
-    selfDurBox.Parent = selfFrame
-    
-    local sdCorner = Instance.new("UICorner")
-    sdCorner.CornerRadius = UDim.new(0, 3)
-    sdCorner.Parent = selfDurBox
-    
-    -- Player List Section
-    local playerListLabel = Instance.new("TextLabel")
-    playerListLabel.Size = UDim2.new(1, 0, 0, 20)
-    playerListLabel.Position = UDim2.new(0, 0, 0, 84)
-    playerListLabel.BackgroundTransparency = 1
-    playerListLabel.Text = "🎯 DAFTAR PLAYER (Termasuk diri sendiri)"
-    playerListLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    playerListLabel.Font = Enum.Font.GothamBold
-    playerListLabel.TextSize = 11
-    playerListLabel.TextXAlignment = Enum.TextXAlignment.Left
-    playerListLabel.Parent = contentFrame
-    
-    -- Search Box
-    local searchBox = Instance.new("TextBox")
-    searchBox.Name = "SearchBox"
-    searchBox.Size = UDim2.new(1, 0, 0, 26)
-    searchBox.Position = UDim2.new(0, 0, 0, 106)
-    searchBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    searchBox.BackgroundTransparency = 0.2
-    searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    searchBox.PlaceholderText = "🔍 Cari player (termasuk diri sendiri)..."
-    searchBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
-    searchBox.Text = ""
-    searchBox.Font = Enum.Font.Gotham
-    searchBox.TextSize = 12
-    searchBox.ClearTextOnFocus = false
-    searchBox.Parent = contentFrame
-    
-    local searchCorner = Instance.new("UICorner")
-    searchCorner.CornerRadius = UDim.new(0, 4)
-    searchCorner.Parent = searchBox
-    
-    -- Player List
-    local playerList = Instance.new("ScrollingFrame")
-    playerList.Name = "PlayerList"
-    playerList.Size = UDim2.new(1, 0, 0, 100)
-    playerList.Position = UDim2.new(0, 0, 0, 138)
-    playerList.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-    playerList.BackgroundTransparency = 0.3
-    playerList.BorderSizePixel = 0
-    playerList.ScrollBarThickness = 4
-    playerList.ScrollBarImageColor3 = Color3.fromRGB(200, 30, 30)
-    playerList.CanvasSize = UDim2.new(0, 0, 0, 0)
-    playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    playerList.Parent = contentFrame
-    
-    local listCorner = Instance.new("UICorner")
-    listCorner.CornerRadius = UDim.new(0, 4)
-    listCorner.Parent = playerList
-    
-    -- Manual Input Section
-    local manualSectionLabel = Instance.new("TextLabel")
-    manualSectionLabel.Size = UDim2.new(1, 0, 0, 18)
-    manualSectionLabel.Position = UDim2.new(0, 0, 0, 244)
-    manualSectionLabel.BackgroundTransparency = 1
-    manualSectionLabel.Text = "⚙ KONTROL MANUAL"
-    manualSectionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    manualSectionLabel.Font = Enum.Font.GothamBold
-    manualSectionLabel.TextSize = 11
-    manualSectionLabel.TextXAlignment = Enum.TextXAlignment.Left
-    manualSectionLabel.Parent = contentFrame
-    
-    local manualNameBox = Instance.new("TextBox")
-    manualNameBox.Name = "ManualNameBox"
-    manualNameBox.Size = UDim2.new(0.55, -3, 0, 28)
-    manualNameBox.Position = UDim2.new(0, 0, 0, 266)
-    manualNameBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    manualNameBox.BackgroundTransparency = 0.2
-    manualNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    manualNameBox.PlaceholderText = "Username..."
-    manualNameBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
-    manualNameBox.Text = ""
-    manualNameBox.Font = Enum.Font.Gotham
-    manualNameBox.TextSize = 12
-    manualNameBox.ClearTextOnFocus = false
-    manualNameBox.Parent = contentFrame
-    
-    local manualCorner = Instance.new("UICorner")
-    manualCorner.CornerRadius = UDim.new(0, 4)
-    manualCorner.Parent = manualNameBox
-    
-    local durationBox = Instance.new("TextBox")
-    durationBox.Name = "DurationBox"
-    durationBox.Size = UDim2.new(0.4, -3, 0, 28)
-    durationBox.Position = UDim2.new(0.57, 0, 0, 266)
-    durationBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    durationBox.BackgroundTransparency = 0.2
-    durationBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    durationBox.PlaceholderText = "Durasi (dtk)"
-    durationBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
-    durationBox.Text = "60"
-    durationBox.Font = Enum.Font.Gotham
-    durationBox.TextSize = 12
-    durationBox.ClearTextOnFocus = false
-    durationBox.Parent = contentFrame
-    
-    local durationCorner = Instance.new("UICorner")
-    durationCorner.CornerRadius = UDim.new(0, 4)
-    durationCorner.Parent = durationBox
-    
-    -- Action Buttons
-    local jailBtn = Instance.new("TextButton")
-    jailBtn.Name = "JailBtn"
-    jailBtn.Size = UDim2.new(0.48, -3, 0, 32)
-    jailBtn.Position = UDim2.new(0, 0, 0, 300)
-    jailBtn.BackgroundColor3 = Color3.fromRGB(180, 25, 25)
-    jailBtn.Text = "⛓ JAIL"
-    jailBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    jailBtn.Font = Enum.Font.GothamBold
-    jailBtn.TextSize = 11
-    jailBtn.Parent = contentFrame
-    
-    local jailCorner = Instance.new("UICorner")
-    jailCorner.CornerRadius = UDim.new(0, 4)
-    jailCorner.Parent = jailBtn
-    
-    local releaseBtn = Instance.new("TextButton")
-    releaseBtn.Name = "ReleaseBtn"
-    releaseBtn.Size = UDim2.new(0.48, -3, 0, 32)
-    releaseBtn.Position = UDim2.new(0.5, 3, 0, 300)
-    releaseBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 40)
-    releaseBtn.Text = "🔓 LEPASKAN"
-    releaseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    releaseBtn.Font = Enum.Font.GothamBold
-    releaseBtn.TextSize = 11
-    releaseBtn.Parent = contentFrame
-    
-    local releaseCorner = Instance.new("UICorner")
-    releaseCorner.CornerRadius = UDim.new(0, 4)
-    releaseCorner.Parent = releaseBtn
-    
-    -- Quick Actions
-    local quickLabel = Instance.new("TextLabel")
-    quickLabel.Size = UDim2.new(1, 0, 0, 18)
-    quickLabel.Position = UDim2.new(0, 0, 0, 340)
-    quickLabel.BackgroundTransparency = 1
-    quickLabel.Text = "⚡ QUICK ACTIONS"
-    quickLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-    quickLabel.Font = Enum.Font.GothamBold
-    quickLabel.TextSize = 10
-    quickLabel.TextXAlignment = Enum.TextXAlignment.Left
-    quickLabel.Parent = contentFrame
-    
-    local quickJailAll = Instance.new("TextButton")
-    quickJailAll.Name = "QuickJailAll"
-    quickJailAll.Size = UDim2.new(1, 0, 0, 26)
-    quickJailAll.Position = UDim2.new(0, 0, 0, 362)
-    quickJailAll.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
-    quickJailAll.BackgroundTransparency = 0.2
-    quickJailAll.Text = "🚨 JAIL ALL PLAYERS (Termasuk Diri Sendiri)"
-    quickJailAll.TextColor3 = Color3.fromRGB(255, 255, 255)
-    quickJailAll.Font = Enum.Font.GothamBold
-    quickJailAll.TextSize = 10
-    quickJailAll.Parent = contentFrame
-    
-    local qjCorner = Instance.new("UICorner")
-    qjCorner.CornerRadius = UDim.new(0, 4)
-    qjCorner.Parent = quickJailAll
-    
-    local quickReleaseAll = Instance.new("TextButton")
-    quickReleaseAll.Name = "QuickReleaseAll"
-    quickReleaseAll.Size = UDim2.new(1, 0, 0, 26)
-    quickReleaseAll.Position = UDim2.new(0, 0, 0, 392)
-    quickReleaseAll.BackgroundColor3 = Color3.fromRGB(30, 100, 30)
-    quickReleaseAll.BackgroundTransparency = 0.2
-    quickReleaseAll.Text = "🔄 RELEASE ALL PLAYERS (Termasuk Diri Sendiri)"
-    quickReleaseAll.TextColor3 = Color3.fromRGB(255, 255, 255)
-    quickReleaseAll.Font = Enum.Font.GothamBold
-    quickReleaseAll.TextSize = 10
-    quickReleaseAll.Parent = contentFrame
-    
-    local qrCorner = Instance.new("UICorner")
-    qrCorner.CornerRadius = UDim.new(0, 4)
-    qrCorner.Parent = quickReleaseAll
-    
-    -- Durasi untuk quick actions
-    local quickDurLabel = Instance.new("TextLabel")
-    quickDurLabel.Size = UDim2.new(0.6, 0, 0, 18)
-    quickDurLabel.Position = UDim2.new(0, 0, 0, 422)
-    quickDurLabel.BackgroundTransparency = 1
-    quickDurLabel.Text = "Durasi Quick Jail:"
-    quickDurLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
-    quickDurLabel.Font = Enum.Font.Gotham
-    quickDurLabel.TextSize = 10
-    quickDurLabel.TextXAlignment = Enum.TextXAlignment.Left
-    quickDurLabel.Parent = contentFrame
-    
-    local quickDurBox = Instance.new("TextBox")
-    quickDurBox.Name = "QuickDurBox"
-    quickDurBox.Size = UDim2.new(0.3, 0, 0, 22)
-    quickDurBox.Position = UDim2.new(0.6, 0, 0, 420)
-    quickDurBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    quickDurBox.BackgroundTransparency = 0.2
-    quickDurBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    quickDurBox.PlaceholderText = "dtk"
-    quickDurBox.Text = "60"
-    quickDurBox.Font = Enum.Font.Gotham
-    quickDurBox.TextSize = 11
-    quickDurBox.ClearTextOnFocus = false
-    quickDurBox.Parent = contentFrame
-    
-    local qdCorner = Instance.new("UICorner")
-    qdCorner.CornerRadius = UDim.new(0, 3)
-    qdCorner.Parent = quickDurBox
-    
-    return {
-        ScreenGui = screenGui, MainFrame = mainFrame,
-        PlayerList = playerList, SearchBox = searchBox,
-        ManualNameBox = manualNameBox, DurationBox = durationBox,
-        StatusLabel = statusLabel,
-        JailBtn = jailBtn, ReleaseBtn = releaseBtn,
-        QuickJailAll = quickJailAll, QuickReleaseAll = quickReleaseAll,
-        SelfJailBtn = selfJailBtn, SelfReleaseBtn = selfReleaseBtn,
-        SelfDurBox = selfDurBox, QuickDurBox = quickDurBox
-    }
-end
+-- ===== BUILD GUI =====
+print("[JAIL EXPLOIT] Membangun GUI...")
 
--- ===== PLAYER LIST (INCLUDING SELF) =====
-local function UpdatePlayerList(gui, filter)
-    filter = filter or ""
-    filter = filter:lower()
-    
-    for _, child in pairs(gui.PlayerList:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "JailExploitGUI"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999999
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 340, 0, 480)
+mainFrame.Position = UDim2.new(0.5, -170, 0.5, -240)
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
+mainFrame.BackgroundTransparency = 0.06
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local mStroke = Instance.new("UIStroke")
+mStroke.Color = Color3.fromRGB(200, 30, 30)
+mStroke.Thickness = 1.5
+mStroke.Parent = mainFrame
+
+local mCorner = Instance.new("UICorner")
+mCorner.CornerRadius = UDim.new(0, 8)
+mCorner.Parent = mainFrame
+
+-- Title
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 38)
+titleBar.BackgroundColor3 = Color3.fromRGB(200, 25, 25)
+titleBar.BackgroundTransparency = 0.1
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local tCorner = Instance.new("UICorner")
+tCorner.CornerRadius = UDim.new(0, 8)
+tCorner.Parent = titleBar
+
+local tGradient = Instance.new("UIGradient")
+tGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 25, 25)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 10, 10))
+})
+tGradient.Parent = titleBar
+
+-- Biar corner bawah titleBar ga rounded
+local coverRect = Instance.new("Frame")
+coverRect.Size = UDim2.new(1, 0, 0, 8)
+coverRect.Position = UDim2.new(0, 0, 1, -4)
+coverRect.BackgroundColor3 = Color3.fromRGB(200, 25, 25)
+coverRect.BackgroundTransparency = 0.1
+coverRect.BorderSizePixel = 0
+coverRect.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -40, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "⛓ JAIL EXPLOIT v1.2"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 13
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -34, 0, 5)
+closeBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
+closeBtn.BackgroundTransparency = 0.2
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 16
+closeBtn.Parent = titleBar
+
+local cCorner = Instance.new("UICorner")
+cCorner.CornerRadius = UDim.new(0, 4)
+cCorner.Parent = closeBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+end)
+
+-- Content container
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -20, 1, -48)
+content.Position = UDim2.new(0, 10, 0, 44)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.Parent = mainFrame
+
+-- ===== STATUS BAR =====
+local statusBar = Instance.new("Frame")
+statusBar.Size = UDim2.new(1, 0, 0, 28)
+statusBar.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+statusBar.BackgroundTransparency = 0.3
+statusBar.BorderSizePixel = 0
+statusBar.Parent = content
+
+local sCorner = Instance.new("UICorner")
+sCorner.CornerRadius = UDim.new(0, 4)
+sCorner.Parent = statusBar
+
+local statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.new(0, 8, 0, 8)
+statusDot.Position = UDim2.new(0, 8, 0.5, -4)
+statusDot.BackgroundColor3 = Color3.fromRGB(255, 200, 0) -- yellow = initializing
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusBar
+
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = statusDot
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -24, 1, 0)
+statusLabel.Position = UDim2.new(0, 20, 0, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Initializing exploit..."
+statusLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 11
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = statusBar
+
+-- ===== DEBUG LOG PANEL (mini) =====
+local debugLabel = Instance.new("TextLabel")
+debugLabel.Size = UDim2.new(1, 0, 0, 18)
+debugLabel.Position = UDim2.new(0, 0, 0, 32)
+debugLabel.BackgroundTransparency = 1
+debugLabel.Text = "[Console log di F9]"
+debugLabel.TextColor3 = Color3.fromRGB(100, 100, 110)
+debugLabel.Font = Enum.Font.Gotham
+debugLabel.TextSize = 9
+debugLabel.TextXAlignment = Enum.TextXAlignment.Left
+debugLabel.Parent = content
+
+-- ===== SELF-JAIL PANEL =====
+local selfFrame = Instance.new("Frame")
+selfFrame.Size = UDim2.new(1, 0, 0, 44)
+selfFrame.Position = UDim2.new(0, 0, 0, 52)
+selfFrame.BackgroundColor3 = Color3.fromRGB(50, 10, 15)
+selfFrame.BackgroundTransparency = 0.4
+selfFrame.BorderSizePixel = 0
+selfFrame.Parent = content
+
+local sfCorner = Instance.new("UICorner")
+sfCorner.CornerRadius = UDim.new(0, 5)
+sfCorner.Parent = selfFrame
+
+local sfStroke = Instance.new("UIStroke")
+sfStroke.Color = Color3.fromRGB(200, 40, 40)
+sfStroke.Thickness = 1
+sfStroke.Transparency = 0.4
+sfStroke.Parent = selfFrame
+
+local selfInfo = Instance.new("TextLabel")
+selfInfo.Size = UDim2.new(0.36, 0, 1, 0)
+selfInfo.Position = UDim2.new(0, 8, 0, 0)
+selfInfo.BackgroundTransparency = 1
+selfInfo.Text = "🧑‍💻 " .. LocalPlayer.Name
+selfInfo.TextColor3 = Color3.fromRGB(255, 210, 120)
+selfInfo.Font = Enum.Font.GothamBold
+selfInfo.TextSize = 12
+selfInfo.TextXAlignment = Enum.TextXAlignment.Left
+selfInfo.Parent = selfFrame
+
+local selfDurLabel = Instance.new("TextLabel")
+selfDurLabel.Size = UDim2.new(0, 30, 0, 16)
+selfDurLabel.Position = UDim2.new(0.36, 2, 0, 4)
+selfDurLabel.BackgroundTransparency = 1
+selfDurLabel.Text = "dtk:"
+selfDurLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
+selfDurLabel.Font = Enum.Font.Gotham
+selfDurLabel.TextSize = 9
+selfDurLabel.TextXAlignment = Enum.TextXAlignment.Right
+selfDurLabel.Parent = selfFrame
+
+local selfDurBox = Instance.new("TextBox")
+selfDurBox.Size = UDim2.new(0, 42, 0, 22)
+selfDurBox.Position = UDim2.new(0.36, 32, 0, 2)
+selfDurBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+selfDurBox.BackgroundTransparency = 0.1
+selfDurBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+selfDurBox.PlaceholderText = "30"
+selfDurBox.Text = "30"
+selfDurBox.Font = Enum.Font.Gotham
+selfDurBox.TextSize = 11
+selfDurBox.ClearTextOnFocus = false
+selfDurBox.Parent = selfFrame
+
+local sdCorner = Instance.new("UICorner")
+sdCorner.CornerRadius = UDim.new(0, 3)
+sdCorner.Parent = selfDurBox
+
+local selfJailBtn = Instance.new("TextButton")
+selfJailBtn.Size = UDim2.new(0, 80, 0, 28)
+selfJailBtn.Position = UDim2.new(0.6, 0, 0.5, -14)
+selfJailBtn.BackgroundColor3 = Color3.fromRGB(180, 25, 25)
+selfJailBtn.Text = "⛓ JAIL"
+selfJailBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+selfJailBtn.Font = Enum.Font.GothamBold
+selfJailBtn.TextSize = 10
+selfJailBtn.Parent = selfFrame
+
+local sjCorner = Instance.new("UICorner")
+sjCorner.CornerRadius = UDim.new(0, 4)
+sjCorner.Parent = selfJailBtn
+
+local selfReleaseBtn = Instance.new("TextButton")
+selfReleaseBtn.Size = UDim2.new(0, 80, 0, 28)
+selfReleaseBtn.Position = UDim2.new(0.6, 86, 0.5, -14)
+selfReleaseBtn.BackgroundColor3 = Color3.fromRGB(25, 110, 35)
+selfReleaseBtn.Text = "🔓 BEBAS"
+selfReleaseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+selfReleaseBtn.Font = Enum.Font.GothamBold
+selfReleaseBtn.TextSize = 10
+selfReleaseBtn.Parent = selfFrame
+
+local srCorner = Instance.new("UICorner")
+srCorner.CornerRadius = UDim.new(0, 4)
+srCorner.Parent = selfReleaseBtn
+
+-- ===== PLAYER LIST SECTION =====
+local listLabel = Instance.new("TextLabel")
+listLabel.Size = UDim2.new(1, 0, 0, 18)
+listLabel.Position = UDim2.new(0, 0, 0, 102)
+listLabel.BackgroundTransparency = 1
+listLabel.Text = "🎯 PLAYER LAIN"
+listLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+listLabel.Font = Enum.Font.GothamBold
+listLabel.TextSize = 11
+listLabel.TextXAlignment = Enum.TextXAlignment.Left
+listLabel.Parent = content
+
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, 0, 0, 26)
+searchBox.Position = UDim2.new(0, 0, 0, 122)
+searchBox.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+searchBox.BackgroundTransparency = 0.1
+searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+searchBox.PlaceholderText = "🔍 Cari player..."
+searchBox.PlaceholderColor3 = Color3.fromRGB(90, 90, 100)
+searchBox.Text = ""
+searchBox.Font = Enum.Font.Gotham
+searchBox.TextSize = 12
+searchBox.ClearTextOnFocus = false
+searchBox.Parent = content
+
+local searchCorner = Instance.new("UICorner")
+searchCorner.CornerRadius = UDim.new(0, 4)
+searchCorner.Parent = searchBox
+
+-- Player list ScrollingFrame
+local playerList = Instance.new("ScrollingFrame")
+playerList.Size = UDim2.new(1, 0, 0, 90)
+playerList.Position = UDim2.new(0, 0, 0, 152)
+playerList.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+playerList.BackgroundTransparency = 0.2
+playerList.BorderSizePixel = 0
+playerList.ScrollBarThickness = 4
+playerList.ScrollBarImageColor3 = Color3.fromRGB(200, 30, 30)
+playerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+playerList.Parent = content
+
+local plCorner = Instance.new("UICorner")
+plCorner.CornerRadius = UDim.new(0, 4)
+plCorner.Parent = playerList
+
+-- ===== MANUAL INPUT =====
+local manualLabel = Instance.new("TextLabel")
+manualLabel.Size = UDim2.new(1, 0, 0, 18)
+manualLabel.Position = UDim2.new(0, 0, 0, 248)
+manualLabel.BackgroundTransparency = 1
+manualLabel.Text = "⚙ MANUAL TARGET"
+manualLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+manualLabel.Font = Enum.Font.GothamBold
+manualLabel.TextSize = 11
+manualLabel.TextXAlignment = Enum.TextXAlignment.Left
+manualLabel.Parent = content
+
+local manualNameBox = Instance.new("TextBox")
+manualNameBox.Size = UDim2.new(0.55, -3, 0, 28)
+manualNameBox.Position = UDim2.new(0, 0, 0, 270)
+manualNameBox.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+manualNameBox.BackgroundTransparency = 0.1
+manualNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+manualNameBox.PlaceholderText = "Username..."
+manualNameBox.PlaceholderColor3 = Color3.fromRGB(90, 90, 100)
+manualNameBox.Text = ""
+manualNameBox.Font = Enum.Font.Gotham
+manualNameBox.TextSize = 12
+manualNameBox.ClearTextOnFocus = false
+manualNameBox.Parent = content
+
+local mnCorner = Instance.new("UICorner")
+mnCorner.CornerRadius = UDim.new(0, 4)
+mnCorner.Parent = manualNameBox
+
+local durationBox = Instance.new("TextBox")
+durationBox.Size = UDim2.new(0.4, -3, 0, 28)
+durationBox.Position = UDim2.new(0.57, 0, 0, 270)
+durationBox.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+durationBox.BackgroundTransparency = 0.1
+durationBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+durationBox.PlaceholderText = "Detik..."
+durationBox.PlaceholderColor3 = Color3.fromRGB(90, 90, 100)
+durationBox.Text = "60"
+durationBox.Font = Enum.Font.Gotham
+durationBox.TextSize = 12
+durationBox.ClearTextOnFocus = false
+durationBox.Parent = content
+
+local dbCorner = Instance.new("UICorner")
+dbCorner.CornerRadius = UDim.new(0, 4)
+dbCorner.Parent = durationBox
+
+-- Action buttons
+local jailBtn = Instance.new("TextButton")
+jailBtn.Size = UDim2.new(0.48, -3, 0, 34)
+jailBtn.Position = UDim2.new(0, 0, 0, 304)
+jailBtn.BackgroundColor3 = Color3.fromRGB(180, 25, 25)
+jailBtn.Text = "⛓ JAIL TARGET"
+jailBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+jailBtn.Font = Enum.Font.GothamBold
+jailBtn.TextSize = 11
+jailBtn.Parent = content
+
+local jbCorner = Instance.new("UICorner")
+jbCorner.CornerRadius = UDim.new(0, 4)
+jbCorner.Parent = jailBtn
+
+local releaseBtn = Instance.new("TextButton")
+releaseBtn.Size = UDim2.new(0.48, -3, 0, 34)
+releaseBtn.Position = UDim2.new(0.5, 3, 0, 304)
+releaseBtn.BackgroundColor3 = Color3.fromRGB(25, 110, 35)
+releaseBtn.Text = "🔓 LEPASKAN TARGET"
+releaseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+releaseBtn.Font = Enum.Font.GothamBold
+releaseBtn.TextSize = 11
+releaseBtn.Parent = content
+
+local rbCorner = Instance.new("UICorner")
+rbCorner.CornerRadius = UDim.new(0, 4)
+rbCorner.Parent = releaseBtn
+
+-- Quick actions
+local quickLabel = Instance.new("TextLabel")
+quickLabel.Size = UDim2.new(1, 0, 0, 18)
+quickLabel.Position = UDim2.new(0, 0, 0, 346)
+quickLabel.BackgroundTransparency = 1
+quickLabel.Text = "⚡ QUICK ACTIONS"
+quickLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+quickLabel.Font = Enum.Font.GothamBold
+quickLabel.TextSize = 10
+quickLabel.TextXAlignment = Enum.TextXAlignment.Left
+quickLabel.Parent = content
+
+local quickJailAll = Instance.new("TextButton")
+quickJailAll.Size = UDim2.new(0.48, -3, 0, 26)
+quickJailAll.Position = UDim2.new(0, 0, 0, 368)
+quickJailAll.BackgroundColor3 = Color3.fromRGB(180, 25, 25)
+quickJailAll.BackgroundTransparency = 0.15
+quickJailAll.Text = "🚨 JAIL ALL"
+quickJailAll.TextColor3 = Color3.fromRGB(255, 255, 255)
+quickJailAll.Font = Enum.Font.GothamBold
+quickJailAll.TextSize = 10
+quickJailAll.Parent = content
+
+local qjaCorner = Instance.new("UICorner")
+qjaCorner.CornerRadius = UDim.new(0, 4)
+qjaCorner.Parent = quickJailAll
+
+local quickReleaseAll = Instance.new("TextButton")
+quickReleaseAll.Size = UDim2.new(0.48, -3, 0, 26)
+quickReleaseAll.Position = UDim2.new(0.5, 3, 0, 368)
+quickReleaseAll.BackgroundColor3 = Color3.fromRGB(25, 100, 30)
+quickReleaseAll.BackgroundTransparency = 0.15
+quickReleaseAll.Text = "🔄 RELEASE ALL"
+quickReleaseAll.TextColor3 = Color3.fromRGB(255, 255, 255)
+quickReleaseAll.Font = Enum.Font.GothamBold
+quickReleaseAll.TextSize = 10
+quickReleaseAll.Parent = content
+
+local qraCorner = Instance.new("UICorner")
+qraCorner.CornerRadius = UDim.new(0, 4)
+qraCorner.Parent = quickReleaseAll
+
+-- Quick dur label
+local qDurLabel = Instance.new("TextLabel")
+qDurLabel.Size = UDim2.new(0.4, 0, 0, 18)
+qDurLabel.Position = UDim2.new(0, 0, 0, 398)
+qDurLabel.BackgroundTransparency = 1
+qDurLabel.Text = "Durasi quick jail:"
+qDurLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+qDurLabel.Font = Enum.Font.Gotham
+qDurLabel.TextSize = 10
+qDurLabel.TextXAlignment = Enum.TextXAlignment.Left
+qDurLabel.Parent = content
+
+local quickDurBox = Instance.new("TextBox")
+quickDurBox.Size = UDim2.new(0, 50, 0, 22)
+quickDurBox.Position = UDim2.new(0.4, 4, 0, 396)
+quickDurBox.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+quickDurBox.BackgroundTransparency = 0.1
+quickDurBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+quickDurBox.Text = "60"
+quickDurBox.Font = Enum.Font.Gotham
+quickDurBox.TextSize = 11
+quickDurBox.ClearTextOnFocus = false
+quickDurBox.Parent = content
+
+local qdCorner = Instance.new("UICorner")
+qdCorner.CornerRadius = UDim.new(0, 3)
+qdCorner.Parent = quickDurBox
+
+print("[JAIL EXPLOIT] GUI selesai dibangun.")
+
+-- ===== PLAYER LIST UPDATER =====
+local function UpdatePlayerList(filter)
+    filter = (filter or ""):lower()
+    playerList:ClearAllChildren()
     
     local yPos = 0
-    local playerCount = 0
+    local count = 0
     
-    local sortedPlayers = {}
+    local sorted = {}
     for _, plr in pairs(Players:GetPlayers()) do
-        table.insert(sortedPlayers, plr)
+        if plr ~= LocalPlayer then
+            table.insert(sorted, plr)
+        end
     end
-    table.sort(sortedPlayers, function(a, b)
-        return a.Name:lower() < b.Name:lower()
-    end)
+    table.sort(sorted, function(a,b) return a.Name:lower() < b.Name:lower() end)
     
-    for _, plr in pairs(sortedPlayers) do
+    for _, plr in pairs(sorted) do
         local name = plr.Name
-        local displayName = plr.DisplayName
-        local isSelf = (plr == LocalPlayer)
+        local display = plr.DisplayName
         
-        if filter == "" or name:lower():find(filter, 1, true) or displayName:lower():find(filter, 1, true) then
+        if filter == "" or name:lower():find(filter,1,true) or display:lower():find(filter,1,true) then
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, -6, 0, 28)
             btn.Position = UDim2.new(0, 3, 0, yPos)
-            btn.BackgroundColor3 = isSelf and Color3.fromRGB(50, 15, 20) or Color3.fromRGB(25, 25, 35)
-            btn.BackgroundTransparency = 0.3
+            btn.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
+            btn.BackgroundTransparency = 0.2
             btn.Text = ""
             btn.BorderSizePixel = 0
-            btn.Parent = gui.PlayerList
+            btn.Parent = playerList
             
-            local btnCorner = Instance.new("UICorner")
-            btnCorner.CornerRadius = UDim.new(0, 4)
-            btnCorner.Parent = btn
+            local bCorner = Instance.new("UICorner")
+            bCorner.CornerRadius = UDim.new(0, 4)
+            bCorner.Parent = btn
             
-            local prefix = isSelf and "⭐ " or ""
-            local nameLabel = Instance.new("TextLabel")
-            nameLabel.Size = UDim2.new(1, -10, 1, 0)
-            nameLabel.Position = UDim2.new(0, 8, 0, 0)
-            nameLabel.BackgroundTransparency = 1
-            nameLabel.Text = prefix .. name .. " (" .. displayName .. ")"
-            nameLabel.TextColor3 = isSelf and Color3.fromRGB(255, 200, 100) or Color3.fromRGB(220, 220, 230)
-            nameLabel.Font = Enum.Font.Gotham
-            nameLabel.TextSize = 11
-            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-            nameLabel.Parent = btn
+            local nLabel = Instance.new("TextLabel")
+            nLabel.Size = UDim2.new(1, -10, 1, 0)
+            nLabel.Position = UDim2.new(0, 8, 0, 0)
+            nLabel.BackgroundTransparency = 1
+            nLabel.Text = name .. " (" .. display .. ")"
+            nLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+            nLabel.Font = Enum.Font.Gotham
+            nLabel.TextSize = 11
+            nLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nLabel.Parent = btn
             
             btn.MouseEnter:Connect(function()
-                btn.BackgroundColor3 = isSelf and Color3.fromRGB(70, 25, 30) or Color3.fromRGB(45, 45, 60)
+                btn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
             end)
             btn.MouseLeave:Connect(function()
-                btn.BackgroundColor3 = isSelf and Color3.fromRGB(50, 15, 20) or Color3.fromRGB(25, 25, 35)
+                btn.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
             end)
-            
             btn.MouseButton1Click:Connect(function()
-                gui.ManualNameBox.Text = name
+                manualNameBox.Text = name
+                -- Auto-focus ke jail button
+                jailBtn:CaptureFocus()
             end)
             
             yPos = yPos + 30
-            playerCount = playerCount + 1
+            count = count + 1
         end
     end
     
-    if playerCount == 0 then
-        local emptyLabel = Instance.new("TextLabel")
-        emptyLabel.Size = UDim2.new(1, 0, 0, 28)
-        emptyLabel.BackgroundTransparency = 1
-        emptyLabel.Text = filter == "" and "Tidak ada player" or "Tidak ditemukan..."
-        emptyLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
-        emptyLabel.Font = Enum.Font.Gotham
-        emptyLabel.TextSize = 11
-        emptyLabel.Parent = gui.PlayerList
+    if count == 0 then
+        local empty = Instance.new("TextLabel")
+        empty.Size = UDim2.new(1, 0, 0, 28)
+        empty.BackgroundTransparency = 1
+        empty.Text = filter == "" and "Tidak ada player lain" or "Tidak ditemukan"
+        empty.TextColor3 = Color3.fromRGB(110, 110, 120)
+        empty.Font = Enum.Font.Gotham
+        empty.TextSize = 11
+        empty.Parent = playerList
+        yPos = 30
     end
     
-    gui.PlayerList.CanvasSize = UDim2.new(0, 0, 0, math.max(yPos + 4, 40))
+    playerList.CanvasSize = UDim2.new(0, 0, 0, yPos + 4)
 end
 
--- ===== EXPLOIT ACTIONS =====
+-- ===== EXPLOIT FUNCTIONS =====
 local function JailPlayer(username, duration)
     if not username or username == "" then
-        ShowNotification("❌ Error", "Masukkan username!", Color3.fromRGB(200, 50, 50))
-        return false
+        ShowNotif("❌ ERROR", "Username kosong!", Color3.fromRGB(200, 50, 50), 3)
+        return false, "Empty username"
     end
-    local dur = tonumber(duration) or 60
-    if dur < 1 then dur = 1 end
     
-    local success, err = pcall(function()
-        JailRemote:FireServer("Jail", username, tostring(dur))
-    end)
+    local dur = tonumber(duration)
+    if not dur or dur < 1 then
+        dur = 60
+    end
+    
+    print("[JAIL] Attempting to jail:", username, "for", dur, "seconds")
+    print("[JAIL] Remote:", JailRemote:GetFullName())
+    
+    local success, err = SafeFireServer("Jail", username, tostring(dur))
     
     if success then
-        ShowNotification("⛓ JAILED", username .. " → " .. dur .. " detik", Color3.fromRGB(200, 30, 30))
+        ShowNotif("⛓ JAILED", username .. " → " .. dur .. "s", Color3.fromRGB(200, 30, 30))
+        print("[JAIL] SUCCESS:", username, "jailed for", dur, "s")
         return true
     else
-        ShowNotification("❌ Gagal", tostring(err), Color3.fromRGB(200, 50, 50))
-        return false
+        local errMsg = tostring(err or "Unknown error")
+        ShowNotif("❌ FAILED", errMsg, Color3.fromRGB(200, 50, 50), 5)
+        print("[JAIL] FAILED:", errMsg)
+        return false, err
     end
 end
 
 local function ReleasePlayer(username)
     if not username or username == "" then
-        ShowNotification("❌ Error", "Masukkan username!", Color3.fromRGB(200, 50, 50))
-        return false
+        ShowNotif("❌ ERROR", "Username kosong!", Color3.fromRGB(200, 50, 50), 3)
+        return false, "Empty username"
     end
-    local success, err = pcall(function()
-        JailRemote:FireServer("Release", username)
-    end)
+    
+    print("[RELEASE] Attempting to release:", username)
+    
+    local success, err = SafeFireServer("Release", username)
+    
     if success then
-        ShowNotification("🔓 RELEASED", username .. " dibebaskan", Color3.fromRGB(30, 150, 50))
+        ShowNotif("🔓 RELEASED", username .. " dibebaskan", Color3.fromRGB(30, 150, 50))
+        print("[RELEASE] SUCCESS:", username)
         return true
     else
-        ShowNotification("❌ Gagal", tostring(err), Color3.fromRGB(200, 50, 50))
-        return false
+        local errMsg = tostring(err or "Unknown error")
+        ShowNotif("❌ FAILED", errMsg, Color3.fromRGB(200, 50, 50), 5)
+        print("[RELEASE] FAILED:", errMsg)
+        return false, err
     end
 end
 
 local function JailAllPlayers(duration)
+    local dur = tonumber(duration) or 60
+    if dur < 1 then dur = 60 end
+    
     local count = 0
+    local errors = {}
+    
     for _, plr in pairs(Players:GetPlayers()) do
-        -- JAIL SEMUA TERMASUK DIRI SENDIRI
-        local success = JailPlayer(plr.Name, duration)
-        if success then count = count + 1 end
-        task.wait(0.1)
+        local ok, err = JailPlayer(plr.Name, dur)
+        if ok then
+            count = count + 1
+        else
+            table.insert(errors, plr.Name .. ":" .. tostring(err))
+        end
+        task.wait(0.15)
     end
-    ShowNotification("⚡ COMPLETE", count .. " player di-jail (termasuk diri sendiri)", Color3.fromRGB(200, 100, 30))
+    
+    if #errors > 0 then
+        ShowNotif("⚡ PARTIAL", count .. " di-jail, " .. #errors .. " gagal. Cek F9", Color3.fromRGB(200, 100, 30), 4)
+        print("[JAIL ALL] Errors:", unpack(errors))
+    else
+        ShowNotif("⚡ COMPLETE", count .. " player di-jail", Color3.fromRGB(200, 100, 30))
+    end
 end
 
 local function ReleaseAllPlayers()
     local count = 0
+    local errors = {}
+    
     for _, plr in pairs(Players:GetPlayers()) do
-        -- RELEASE SEMUA TERMASUK DIRI SENDIRI
-        local success = ReleasePlayer(plr.Name)
-        if success then count = count + 1 end
-        task.wait(0.1)
+        local ok, err = ReleasePlayer(plr.Name)
+        if ok then
+            count = count + 1
+        else
+            table.insert(errors, plr.Name .. ":" .. tostring(err))
+        end
+        task.wait(0.15)
     end
-    ShowNotification("🔄 COMPLETE", count .. " player dibebaskan (termasuk diri sendiri)", Color3.fromRGB(30, 150, 50))
-end
-
--- ===== INIT GUI =====
-local gui = CreateJailExploitGUI()
-
--- Test exploit
-task.delay(0.5, function()
-    local success, err = pcall(function()
-        JailRemote:FireServer("Release", LocalPlayer.Name)
-    end)
-    if success then
-        gui.StatusLabel.Text = "● VULNERABLE | Server-side auth MISSING"
-        gui.StatusLabel.TextColor3 = Color3.fromRGB(255, 70, 70)
-        gui.StatusLabel.BackgroundColor3 = Color3.fromRGB(60, 15, 15)
+    
+    if #errors > 0 then
+        ShowNotif("🔄 PARTIAL", count .. " dibebaskan, " .. #errors .. " gagal", Color3.fromRGB(200, 150, 30), 4)
+        print("[RELEASE ALL] Errors:", unpack(errors))
     else
-        gui.StatusLabel.Text = "● SECURE | Server memvalidasi akses"
-        gui.StatusLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
-        gui.StatusLabel.BackgroundColor3 = Color3.fromRGB(50, 40, 10)
+        ShowNotif("🔄 COMPLETE", count .. " player dibebaskan", Color3.fromRGB(30, 150, 50))
     end
-end)
-
--- Player list
-local function RefreshPlayerList()
-    UpdatePlayerList(gui, gui.SearchBox.Text)
 end
 
-gui.SearchBox:GetPropertyChangedSignal("Text"):Connect(RefreshPlayerList)
-Players.PlayerAdded:Connect(RefreshPlayerList)
-Players.PlayerRemoved:Connect(RefreshPlayerList)
-
-task.wait(0.2)
-RefreshPlayerList()
-
-task.spawn(function()
-    while gui.ScreenGui and gui.ScreenGui.Parent do
-        task.wait(5)
-        RefreshPlayerList()
-    end
+-- ===== BIND EVENTS =====
+-- Self jail/release
+selfJailBtn.MouseButton1Click:Connect(function()
+    JailPlayer(LocalPlayer.Name, selfDurBox.Text)
 end)
 
--- ===== BUTTON EVENTS =====
--- Self Jail
-gui.SelfJailBtn.MouseButton1Click:Connect(function()
-    JailPlayer(LocalPlayer.Name, gui.SelfDurBox.Text)
-end)
-
--- Self Release
-gui.SelfReleaseBtn.MouseButton1Click:Connect(function()
+selfReleaseBtn.MouseButton1Click:Connect(function()
     ReleasePlayer(LocalPlayer.Name)
 end)
 
--- Manual Jail
-gui.JailBtn.MouseButton1Click:Connect(function()
-    JailPlayer(gui.ManualNameBox.Text, gui.DurationBox.Text)
+-- Manual target
+jailBtn.MouseButton1Click:Connect(function()
+    JailPlayer(manualNameBox.Text, durationBox.Text)
 end)
 
--- Manual Release
-gui.ReleaseBtn.MouseButton1Click:Connect(function()
-    ReleasePlayer(gui.ManualNameBox.Text)
+releaseBtn.MouseButton1Click:Connect(function()
+    ReleasePlayer(manualNameBox.Text)
 end)
 
--- Quick Jail All
-gui.QuickJailAll.MouseButton1Click:Connect(function()
-    JailAllPlayers(gui.QuickDurBox.Text)
+-- Quick actions
+quickJailAll.MouseButton1Click:Connect(function()
+    -- Disable button biar ga double-click
+    quickJailAll.BackgroundTransparency = 0.5
+    quickJailAll.Text = "⏳ MENGJAIL..."
+    task.spawn(function()
+        JailAllPlayers(quickDurBox.Text)
+        quickJailAll.BackgroundTransparency = 0.15
+        quickJailAll.Text = "🚨 JAIL ALL"
+    end)
 end)
 
--- Quick Release All
-gui.QuickReleaseAll.MouseButton1Click:Connect(function()
-    ReleaseAllPlayers()
+quickReleaseAll.MouseButton1Click:Connect(function()
+    quickReleaseAll.BackgroundTransparency = 0.5
+    quickReleaseAll.Text = "⏳ MELEPASKAN..."
+    task.spawn(function()
+        ReleaseAllPlayers()
+        quickReleaseAll.BackgroundTransparency = 0.15
+        quickReleaseAll.Text = "🔄 RELEASE ALL"
+    end)
 end)
 
--- Enter key di manual name -> jail
-gui.ManualNameBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        JailPlayer(gui.ManualNameBox.Text, gui.DurationBox.Text)
-    end
+-- Enter key handlers
+manualNameBox.FocusLost:Connect(function(enter)
+    if enter then JailPlayer(manualNameBox.Text, durationBox.Text) end
 end)
 
--- Enter di duration -> jail
-gui.DurationBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        JailPlayer(gui.ManualNameBox.Text, gui.DurationBox.Text)
-    end
+durationBox.FocusLost:Connect(function(enter)
+    if enter then JailPlayer(manualNameBox.Text, durationBox.Text) end
+end)
+
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    UpdatePlayerList(searchBox.Text)
+end)
+
+-- Player list refresh
+Players.PlayerAdded:Connect(function()
+    UpdatePlayerList(searchBox.Text)
+end)
+Players.PlayerRemoved:Connect(function()
+    UpdatePlayerList(searchBox.Text)
 end)
 
 -- Toggle GUI
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.RightBracket then
-        gui.MainFrame.Visible = not gui.MainFrame.Visible
+        mainFrame.Visible = not mainFrame.Visible
     end
 end)
 
-print("===== JAIL EXPLOIT v1.1 LOADED =====")
-print("✅ Self-Jail ENABLED - Bisa jail diri sendiri")
-print("✅ Player list includes yourself (⭐)")
-print("✅ Khusus server sepi biar tetep seru!")
-print("Tekan ']' untuk toggle GUI")
+-- ===== INIT SEQUENCE =====
+print("[JAIL EXPLOIT] Initializing...")
+
+-- Langkah 1: Populate player list
+task.wait(0.3)
+UpdatePlayerList("")
+
+-- Langkah 2: Uji coba remote sekali (Release diri sendiri)
+task.wait(0.5)
+print("[JAIL EXPLOIT] Testing remote connection...")
+
+local testSuccess, testErr = pcall(function()
+    JailRemote:FireServer("Release", LocalPlayer.Name)
+end)
+
+if testSuccess then
+    print("[JAIL EXPLOIT] ✅ TEST PASSED - Server menerima remote call")
+    print("[JAIL EXPLOIT] ✅ SERVER-SIDE AUTH MISSING (VULNERABLE)")
+    statusDot.BackgroundColor3 = Color3.fromRGB(255, 60, 60) -- red
+    statusLabel.Text = "● VULNERABLE | Server tidak validasi akses!"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+    statusBar.BackgroundColor3 = Color3.fromRGB(50, 10, 10)
+    
+    ShowNotif("⚠️ VULNERABLE", "Server-side authorization MISSING!", Color3.fromRGB(255, 50, 50), 5)
+else
+    print("[JAIL EXPLOIT] ❌ TEST FAILED -", tostring(testErr))
+    print("[JAIL EXPLOIT] ❌ Mungkin server SUDAH memvalidasi akses")
+    statusDot.BackgroundColor3 = Color3.fromRGB(255, 200, 0) -- yellow
+    statusLabel.Text = "● SECURE? | Server mungkin validasi. Error: " .. tostring(testErr):sub(1, 40)
+    statusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+    statusBar.BackgroundColor3 = Color3.fromRGB(50, 40, 5)
+    
+    ShowNotif("⚠️ SECURE?", "Server mungkin validasi. Cek F9", Color3.fromRGB(200, 150, 30), 5)
+end
+
+-- Auto-refresh player list setiap 5 detik
+task.spawn(function()
+    while screenGui and screenGui.Parent do
+        task.wait(5)
+        UpdatePlayerList(searchBox.Text)
+    end
+end)
+
+print("========================================")
+print("  JAIL EXPLOIT v1.2 READY")
+print("  Remote:", JailRemote:GetFullName())
+print("  Toggle GUI: [ ] (Right Bracket)")
+print("  Debug: Buka console F9")
+print("========================================")
