@@ -1,7 +1,7 @@
--- CarbonResource Weapon System - Pentest Exploit
+-- CarbonResource Weapon System - Pentest Exploit (FIXED)
 -- For authorized security testing only
--- Target: DamageEvent, ExplosiveEvent, MedEvent, storeDataEvent, placeC34Event, equipEvent
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,49 +10,57 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = workspace.CurrentCamera
 
--- Find CarbonResource remote events
-local Carbon = (function()
-    local c = ReplicatedStorage:FindFirstChild("CarbonResource")
-    if not c then
-        for _, v in pairs(ReplicatedStorage:GetChildren()) do
-            if v:FindFirstChild("Events") and v:FindFirstChild("Global") then
-                return v
-            end
-        end
+-- CARI CarbonResource
+local Carbon
+for _, v in pairs(ReplicatedStorage:GetChildren()) do
+    if v.Name == "CarbonResource" or (v:FindFirstChild("Events") and v:FindFirstChild("Global")) then
+        Carbon = v
+        break
     end
-    return c
-end)()
+end
 
 if not Carbon then
-    return warn("[!] CarbonResource not found")
+    warn("[!] CarbonResource tidak ditemukan")
+    return
 end
 
-local Events = Carbon:WaitForChild("Events")
-local Global = Carbon:WaitForChild("Global")
-local GlobalConfig = require(Global:WaitForChild("GlobalConfig"))
+local Events = Carbon:FindFirstChild("Events")
+local FX = Carbon:FindFirstChild("FX")
+local Models = Carbon:FindFirstChild("Models")
+local HUD = Carbon:FindFirstChild("HUD")
+local Global = Carbon:FindFirstChild("Global")
+local Modules = Carbon:FindFirstChild("Modules")
 
-local R = {
-    equipEvent = Events:WaitForChild("Equip"),
-    updateCharEvent = Events:WaitForChild("UpdateChar"),
-    damageEvent = Events:WaitForChild("DamageEvent"),
-    hitEvent = Events:WaitForChild("HitEvent"),
-    explosiveEvent = Events:WaitForChild("ExplosiveEvent"),
-    nadeEvent = Events:WaitForChild("NadeEvent"),
-    placeC4Event = Events:WaitForChild("PlaceC4"),
-    medEvent = Events:WaitForChild("MedEvent"),
-    storeDataEvent = Events:WaitForChild("StoreData"),
-    createOwnerEvent = Events:WaitForChild("CreateOwner"),
-    resupplyEvent = Events:WaitForChild("ResupplyEvent"),
-    manipEvent = Events:WaitForChild("ManipEvent"),
-    flybyEvent = Events:WaitForChild("flybyEvent"),
-    connectionEvent = Events:WaitForChild("EventConnection"),
-    serverFXEvent = Events:WaitForChild("ServerFXEvent"),
+if not Events then
+    warn("[!] Events folder tidak ditemukan di CarbonResource")
+    return
+end
+
+-- GLOBALS
+local GlobalConfig = {}
+if Global and Global:FindFirstChild("GlobalConfig") then
+    local success, result = pcall(require, Global.GlobalConfig)
+    if success then GlobalConfig = result end
+end
+
+-- KUMPULKAN REMOTES (safe)
+local R = {}
+local remoteNames = {
+    "Equip", "UpdateChar", "DamageEvent", "HitEvent", "ExplosiveEvent",
+    "NadeEvent", "PlaceC4", "MedEvent", "StoreData", "CreateOwner",
+    "ResupplyEvent", "ManipEvent", "flybyEvent", "EventConnection", "ServerFXEvent"
 }
-
--- Utility
-local function getChar(p)
-    return p and p.Character or nil
+for _, name in pairs(remoteNames) do
+    local remote = Events:FindFirstChild(name) or Events:FindFirstChild(name:lower())
+    if remote then
+        R[name] = remote
+    else
+        warn("[!] Remote tidak ditemukan:", name)
+    end
 end
+
+-- UTILITY
+local function getChar(p) return p and p.Character or nil end
 local function getHum(p)
     local c = getChar(p)
     return c and c:FindFirstChild("Humanoid") or nil
@@ -69,6 +77,21 @@ local function getAllPlayers()
         end
     end
     return list
+end
+
+-- SAFE FIRE
+local function fire(remote, ...)
+    if not remote then warn("[!] Remote nil") return false end
+    local s, e = pcall(function() remote:FireServer(...) end)
+    if not s then warn("[!] FireServer error:", e) end
+    return s
+end
+
+local function invoke(remote, ...)
+    if not remote then warn("[!] Remote nil") return nil end
+    local s, r = pcall(function() return remote:InvokeServer(...) end)
+    if not s then warn("[!] InvokeServer error:", r) end
+    return s and r or nil
 end
 
 -- =============================================
@@ -89,7 +112,7 @@ Main.Active = true
 Main.Draggable = true
 Main.Parent = ScreenGui
 
--- Title bar
+-- Title
 local TitleBar = Instance.new("Frame")
 TitleBar.Size = UDim2.new(1, 0, 0, 30)
 TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -99,13 +122,12 @@ TitleBar.Parent = Main
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, 0, 1, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "CarbonResource Exploit  |  Authorized Pentest"
+Title.Text = "CarbonResource Exploit | Authorized Pentest"
 Title.TextColor3 = Color3.fromRGB(0, 255, 100)
 Title.TextSize = 14
 Title.Font = Enum.Font.GothamBold
 Title.Parent = TitleBar
 
--- Close button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
 CloseBtn.Position = UDim2.new(1, -30, 0, 0)
@@ -117,7 +139,7 @@ CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.Parent = TitleBar
 CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
--- Tab buttons
+-- Tab bar
 local TabFrame = Instance.new("Frame")
 TabFrame.Size = UDim2.new(1, 0, 0, 30)
 TabFrame.Position = UDim2.new(0, 0, 0, 30)
@@ -125,15 +147,14 @@ TabFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 TabFrame.BorderSizePixel = 0
 TabFrame.Parent = Main
 
-local tabs = {"Damage", "Explosive", "Utility", "ESP", "Settings"}
+local tabs = {"Damage", "Explosive", "Utility", "ESP"}
 local tabButtons = {}
 local tabContents = {}
-local activeTab = "Damage"
 
 for i, name in ipairs(tabs) do
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 110, 1, 0)
-    btn.Position = UDim2.new(0, (i-1)*110, 0, 0)
+    btn.Size = UDim2.new(0, 137, 1, 0)
+    btn.Position = UDim2.new(0, (i-1)*137, 0, 0)
     btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     btn.BorderSizePixel = 0
     btn.Text = name
@@ -143,7 +164,6 @@ for i, name in ipairs(tabs) do
     btn.Parent = TabFrame
     tabButtons[name] = btn
     
-    -- Content container for each tab
     local container = Instance.new("ScrollingFrame")
     container.Size = UDim2.new(1, -10, 1, -10)
     container.Position = UDim2.new(0, 5, 0, 5)
@@ -159,120 +179,33 @@ for i, name in ipairs(tabs) do
     tabContents[name] = container
     
     btn.MouseButton1Click:Connect(function()
-        activeTab = name
         for _, b in pairs(tabButtons) do
             b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
             b.TextColor3 = Color3.fromRGB(200, 200, 200)
         end
         btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
         btn.TextColor3 = Color3.fromRGB(0, 255, 100)
-        for _, c in pairs(tabContents) do
-            c.Parent.Visible = false
-        end
+        for _, c in pairs(tabContents) do c.Parent.Visible = false end
         container.Parent.Visible = true
     end)
 end
 
--- Helper to create labeled toggle
-local function makeToggle(parent, name, default, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -10, 0, 30)
-    frame.BackgroundTransparency = 1
-    frame.BorderSizePixel = 0
-    frame.Parent = parent
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0, 200, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = Color3.fromRGB(220, 220, 220)
-    label.TextSize = 13
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-    
-    local toggle = Instance.new("TextButton")
-    toggle.Size = UDim2.new(0, 50, 0, 22)
-    toggle.Position = UDim2.new(1, -60, 0, 4)
-    toggle.BackgroundColor3 = default and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)
-    toggle.BorderSizePixel = 0
-    toggle.Text = default and "ON" or "OFF"
-    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggle.TextSize = 11
-    toggle.Font = Enum.Font.GothamBold
-    toggle.Parent = frame
-    
-    local state = default
-    toggle.MouseButton1Click:Connect(function()
-        state = not state
-        toggle.BackgroundColor3 = state and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)
-        toggle.Text = state and "ON" or "OFF"
-        if callback then callback(state) end
-    end)
-    
-    -- Add spacing
-    local spacer = Instance.new("Frame")
-    spacer.Size = UDim2.new(1, 0, 0, 5)
-    spacer.BackgroundTransparency = 1
-    spacer.Parent = parent
-    
-    return frame, toggle, function() return state end
-end
-
--- Helper: TextBox with label
-local function makeInput(parent, name, default, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -10, 0, 30)
-    frame.BackgroundTransparency = 1
-    frame.Parent = parent
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0, 150, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = Color3.fromRGB(220, 220, 220)
-    label.TextSize = 13
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-    
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(0, 80, 0, 22)
-    box.Position = UDim2.new(1, -90, 0, 4)
-    box.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    box.BorderSizePixel = 0
-    box.Text = tostring(default)
-    box.TextColor3 = Color3.fromRGB(255, 255, 255)
-    box.TextSize = 12
-    box.Font = Enum.Font.Gotham
-    box.Parent = frame
-    
-    local spacer = Instance.new("Frame")
-    spacer.Size = UDim2.new(1, 0, 0, 5)
-    spacer.BackgroundTransparency = 1
-    spacer.Parent = parent
-    
-    return frame, box
-end
-
 -- Helper: Button
-local function makeButton(parent, name, callback)
+local function makeBtn(parent, text, cb)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -10, 0, 30)
+    btn.Size = UDim2.new(1, -10, 0, 28)
     btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     btn.BorderSizePixel = 0
-    btn.Text = name
+    btn.Text = text
     btn.TextColor3 = Color3.fromRGB(200, 255, 200)
-    btn.TextSize = 13
+    btn.TextSize = 12
     btn.Font = Enum.Font.Gotham
     btn.Parent = parent
-    
-    local spacer = Instance.new("Frame")
-    spacer.Size = UDim2.new(1, 0, 0, 5)
-    spacer.BackgroundTransparency = 1
-    spacer.Parent = parent
-    
-    btn.MouseButton1Click:Connect(callback)
+    local s = Instance.new("Frame")
+    s.Size = UDim2.new(1, 0, 0, 4)
+    s.BackgroundTransparency = 1
+    s.Parent = parent
+    btn.MouseButton1Click:Connect(cb)
     return btn
 end
 
@@ -280,61 +213,29 @@ end
 -- TAB: DAMAGE
 -- =============================================
 local dmgTab = tabContents["Damage"]
-makeToggle(dmgTab, "Enable Damage Hack", false, function() end)
-local _, _, dmgEnabled = makeToggle(dmgTab, "Mass Kill All Players", false, function() end)
-local _, _, dmgSpamToggle = makeToggle(dmgTab, "Spam Damage (Loop)", false, function() end)
-makeInput(dmgTab, "Damage Value", 100, function() end)
-local _, dmgValBox, _ = nil, nil, nil
-do
-    local f, b = makeInput(dmgTab, "Damage Value", 100)
-    dmgValBox = b
-end
-local _, headDmgBox, _ = nil, nil, nil
-do
-    local f, b = makeInput(dmgTab, "Headshot Mult", 2)
-    headDmgBox = b
-end
-makeButton(dmgTab, "KILL ALL (Single Shot)", function()
-    local dmg = tonumber(dmgValBox.Text) or 100
+makeBtn(dmgTab, "KILL ALL PLAYERS (1 Shot)", function()
+    local dmg = 9999
     for _, p in pairs(getAllPlayers()) do
         local hum = getHum(p)
         if hum then
-            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
-            R.damageEvent:FireServer(hum, dmg * 5, "Head", {"nil", "Auth", "nil", "nil"})
+            fire(R["CreateOwner"], hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+            fire(R["DamageEvent"], hum, dmg, "Head", {"nil", "Auth", "nil", "nil"})
         end
     end
 end)
-makeButton(dmgTab, "CRIT: Deal Damage to Specific Player", function()
-    local target = nil
-    for _, p in pairs(getAllPlayers()) do
-        target = p
-        break
-    end
-    if target then
-        local hum = getHum(target)
-        if hum then
-            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
-            R.damageEvent:FireServer(hum, 999999, "Head", {"nil", "Auth", "nil", "nil"})
-        end
-    end
-end)
-makeButton(dmgTab, "CRIT: Bypass Armor (Limb Shot)", function()
-    local dmg = tonumber(dmgValBox.Text) or 100
+makeBtn(dmgTab, "KILL ALL (Limb Bypass Armor)", function()
     for _, p in pairs(getAllPlayers()) do
         local hum = getHum(p)
         if hum then
-            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
-            R.damageEvent:FireServer(hum, dmg, "Left Leg", {"nil", "Auth", "nil", "nil"})
+            fire(R["CreateOwner"], hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+            fire(R["DamageEvent"], hum, 9999, "Left Leg", {"nil", "Auth", "nil", "nil"})
         end
     end
 end)
-makeButton(dmgTab, "HEAL ALL PLAYERS (Exploit Med)", function()
-    -- Possibly the medEvent heals without validation
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            p = LocalPlayer
-        end
-        R.medEvent:FireServer(true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "Auth")
+makeBtn(dmgTab, "HEAL SELF x10", function()
+    for i = 1, 10 do
+        fire(R["MedEvent"], true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "Auth")
+        wait(0.1)
     end
 end)
 
@@ -342,55 +243,16 @@ end)
 -- TAB: EXPLOSIVE
 -- =============================================
 local expTab = tabContents["Explosive"]
-makeToggle(expTab, "Enable Explosion Hack", false, function() end)
-local _, expRadiusBox, _ = nil, nil, nil
-do local f, b = makeInput(expTab, "Blast Radius", 50) expRadiusBox = b end
-local _, expPressureBox, _ = nil, nil, nil
-do local f, b = makeInput(expTab, "Blast Pressure", 500000) expPressureBox = b end
-local _, expDJBox, _ = nil, nil, nil
-do local f, b = makeInput(expTab, "Destroy Joints Rad", 50) expDJBox = b end
-
--- Placeholder for explosion type
-local expType = "Blast" -- C4 ExplosionType from globalConfig
-
-makeButton(expTab, "NUKE ALL PLAYERS (Explosion at Each)", function()
-    local radius = tonumber(expRadiusBox.Text) or 50
-    local pressure = tonumber(expPressureBox.Text) or 500000
-    local dj = tonumber(expDJBox.Text) or 50
+makeBtn(expTab, "NUKE DI CURSOR", function()
+    local pos = Mouse.Hit.p
+    fire(R["ExplosiveEvent"], nil, pos, 500000, 50, 50, "C4Explosion", nil, nil, nil, nil, nil, nil, "Auth", nil)
+end)
+makeBtn(expTab, "NUKE SEMUA PEMAIN", function()
     for _, p in pairs(getAllPlayers()) do
         local root = getRoot(p)
         if root then
-            R.explosiveEvent:FireServer(nil, root.Position, pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
+            fire(R["ExplosiveEvent"], nil, root.Position, 500000, 50, 50, "C4Explosion", nil, nil, nil, nil, nil, nil, "Auth", nil)
         end
-    end
-end)
-
-makeButton(expTab, "NUKE AT CURSOR", function()
-    local radius = tonumber(expRadiusBox.Text) or 50
-    local pressure = tonumber(expPressureBox.Text) or 500000
-    local dj = tonumber(expDJBox.Text) or 50
-    local pos = Mouse.Hit.p
-    R.explosiveEvent:FireServer(nil, pos, pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
-end)
-
-makeButton(expTab, "NUKE AT CURSOR x5 (Stack)", function()
-    local radius = tonumber(expRadiusBox.Text) or 50
-    local pressure = tonumber(expPressureBox.Text) or 500000
-    local dj = tonumber(expDJBox.Text) or 50
-    local pos = Mouse.Hit.p
-    for i = 1, 5 do
-        R.explosiveEvent:FireServer(nil, pos + Vector3.new(math.random(-5,5), math.random(-5,5), math.random(-5,5)), pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
-    end
-end)
-
-makeButton(expTab, "Test: Nade Explosion", function()
-    -- Mimics nadeEvent pattern
-    local root = getRoot(LocalPlayer)
-    if root then
-        local pos = root.Position + Vector3.new(0, 10, 0)
-        R.nadeEvent:FireServer(LocalPlayer, pos, Vector3.new(0, -50, 0))
-        wait(5)
-        R.explosiveEvent:FireServer(nil, pos, GlobalConfig.BlastPressue or 500000, GlobalConfig.BlastRadius or 30, GlobalConfig.DestroyJointRadius or 20, GlobalConfig.ExplosionType or "Blast", nil, nil, nil, nil, nil, nil, "Auth", nil)
     end
 end)
 
@@ -398,125 +260,65 @@ end)
 -- TAB: UTILITY
 -- =============================================
 local utilTab = tabContents["Utility"]
-makeToggle(utilTab, "Enable Utility Hacks", false, function() end)
-
-makeButton(utilTab, "HEAL SELF (MedEvent Spam x10)", function()
-    for i = 1, 10 do
-        R.medEvent:FireServer(true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "Auth")
-        wait(0.1)
-    end
+makeBtn(utilTab, "RESUPPLY AMMO", function()
+    invoke(R["StoreData"], "Store", "M4A1", 9999, 9999, 99, 0, 0, 0, true, false, "Auth", false, false, false, 60, 30, 0, false, {CFrame.new(), CFrame.new()})
 end)
-
-makeButton(utilTab, "RESUPPLY (Ammo Refill)", function()
-    -- The resupplyEvent is OnClientEvent, but we can try storeData manipulation
-    R.storeDataEvent:InvokeServer("Store", "ToolName", 9999, 99999, 99, 1, 0, 0, true, false, "Auth", false, false, false, 60, 30, 0, false, {CFrame.new(), CFrame.new()})
-end)
-
-makeButton(utilTab, "STORE DATA - MAX AMMO", function()
-    local success, ammo, stored, expl, firemode, canshoot = R.storeDataEvent:InvokeServer("Retrieve", "AnyTool", 30, 30*4, 3, 0, 1, 1, nil, nil, "Auth")
-    -- Then store with inflated values
-    R.storeDataEvent:InvokeServer("Store", "AnyTool", 9999, 99999, 99, 0, 0, 0, true, false, "Auth", false, false, false, 60, 30, 0, false, {CFrame.new(), CFrame.new()})
-end)
-
-makeButton(utilTab, "PLACE C4 ON ALL PLAYERS", function()
+makeBtn(utilTab, "PLACE C4 DI SEMUA", function()
     for _, p in pairs(getAllPlayers()) do
         local root = getRoot(p)
         if root then
-            local pos = root.Position
-            local _, c4 = pcall(R.placeC4Event.InvokeServer, R.placeC4Event, pos, Vector3.new(0, 1, 0), 0, "Auth", Vector3.new(0, 1, 0), root)
+            invoke(R["PlaceC4"], root.Position + Vector3.new(0, -1, 0), Vector3.new(0, 1, 0), 0, "Auth", Vector3.new(0, 1, 0), root)
         end
     end
-end)
-
-makeButton(utilTab, "EQUIP ANY WEAPON (Bypass)", function()
-    -- Try equipping without having the tool in backpack
-    local weaponName = "M4A1" -- change as needed
-    R.equipEvent:FireServer(true, "Auth", weaponName, 
-        CFrame.new(0.5, -0.5, -1), 
-        CFrame.new(-0.5, -0.5, -1),
-        CFrame.new(0, 0, -1.5),
-        CFrame.new(),
-        false, false, false, CFrame.new()
-    )
-end)
-
-makeButton(utilTab, "TOGGLE NVG / LASER / FLASHLIGHT", function()
-    R.manipEvent:FireServer(true, "Laser", nil, nil, nil, nil, nil, nil, nil, "Auth")
-    wait(0.5)
-    R.manipEvent:FireServer(true, "FlashLight", nil, nil, nil, nil, nil, nil, nil, "Auth")
 end)
 
 -- =============================================
 -- TAB: ESP
 -- =============================================
 local espTab = tabContents["ESP"]
-local espEnabled = false
 local espConn = nil
+local espOn = false
 
-makeToggle(espTab, "Enable ESP", false, function(state)
-    espEnabled = state
-    if state then
-        -- Clean old ESP
+local espBtn = makeBtn(espTab, "TOGGLE ESP", function()
+    espOn = not espOn
+    if espOn then
+        espBtn.Text = "TOGGLE ESP (ON)"
+        espBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 50)
         for _, v in pairs(workspace:GetChildren()) do
             if v.Name:match("^ESP_") then v:Destroy() end
         end
         espConn = RunService.RenderStepped:Connect(function()
-            if not espEnabled then espConn:Disconnect() return end
+            if not espOn then espConn:Disconnect() return end
             for _, p in pairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer then
                     local c = getChar(p)
                     local root = getRoot(p)
                     if c and root then
-                        local espName = workspace:FindFirstChild("ESP_" .. p.Name)
-                        if not espName then
-                            espName = Instance.new("BillboardGui")
-                            espName.Name = "ESP_" .. p.Name
-                            espName.AlwaysOnTop = true
-                            espName.Size = UDim2.new(0, 200, 0, 50)
-                            espName.Adornee = root
-                            espName.Parent = workspace
-                            
-                            local nameLabel = Instance.new("TextLabel")
-                            nameLabel.Size = UDim2.new(1, 0, 0.6, 0)
-                            nameLabel.BackgroundTransparency = 1
-                            nameLabel.Text = p.Name .. " [" .. math.floor((Camera.CFrame.Position - root.Position).magnitude) .. "m]"
-                            nameLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-                            nameLabel.TextSize = 13
-                            nameLabel.Font = Enum.Font.GothamBold
-                            nameLabel.TextStrokeTransparency = 0.5
-                            nameLabel.Parent = espName
-                            
-                            local hpLabel = Instance.new("TextLabel")
-                            hpLabel.Size = UDim2.new(1, 0, 0.4, 0)
-                            hpLabel.Position = UDim2.new(0, 0, 0.6, 0)
-                            hpLabel.BackgroundTransparency = 1
-                            local hum = getHum(p)
-                            hpLabel.Text = hum and math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) or "HP?"
-                            hpLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-                            hpLabel.TextSize = 11
-                            hpLabel.Font = Enum.Font.Gotham
-                            hpLabel.TextStrokeTransparency = 0.5
-                            hpLabel.Parent = espName
-                        else
-                            local nameLabel = espName:FindFirstChildOfClass("TextLabel")
-                            if nameLabel then
-                                nameLabel.Text = p.Name .. " [" .. math.floor((Camera.CFrame.Position - root.Position).magnitude) .. "m]"
-                            end
-                            local hpLabel = espName:FindFirstChildOfClass("TextLabel")
-                            if hpLabel then
-                                local hum = getHum(p)
-                                if hum then
-                                    if hpLabel ~= nameLabel then
-                                        hpLabel.Text = math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth)
-                                    end
-                                end
-                            end
+                        local esp = workspace:FindFirstChild("ESP_" .. p.Name)
+                        if not esp then
+                            esp = Instance.new("BillboardGui")
+                            esp.Name = "ESP_" .. p.Name
+                            esp.AlwaysOnTop = true
+                            esp.Size = UDim2.new(0, 200, 0, 50)
+                            esp.Adornee = root
+                            esp.Parent = workspace
+                            local nl = Instance.new("TextLabel")
+                            nl.Size = UDim2.new(1, 0, 1, 0)
+                            nl.BackgroundTransparency = 1
+                            nl.Text = p.Name
+                            nl.TextColor3 = Color3.fromRGB(0, 255, 100)
+                            nl.TextSize = 13
+                            nl.Font = Enum.Font.GothamBold
+                            nl.TextStrokeTransparency = 0.5
+                            nl.Parent = esp
                         end
                     end
                 end
             end
         end)
     else
+        espBtn.Text = "TOGGLE ESP (OFF)"
+        espBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
         if espConn then espConn:Disconnect() espConn = nil end
         for _, v in pairs(workspace:GetChildren()) do
             if v.Name:match("^ESP_") then v:Destroy() end
@@ -524,49 +326,9 @@ makeToggle(espTab, "Enable ESP", false, function(state)
     end
 end)
 
--- =============================================
--- TAB: SETTINGS
--- =============================================
-local setTab = tabContents["Settings"]
-makeButton(setTab, "DESTROY GUI", function() ScreenGui:Destroy() end)
-makeButton(setTab, "RESET ALL TOGGLES", function()
-    -- ScreenGui:Destroy() and re-run would reset
-end)
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -10, 0, 50)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Ready. Authorized pentest - CarbonResource Weapon System"
-statusLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.Parent = setTab
-
--- Auto arm first tab
+-- Set default tab
 tabButtons["Damage"].BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 tabButtons["Damage"].TextColor3 = Color3.fromRGB(0, 255, 100)
 tabContents["Damage"].Parent.Visible = true
 
--- =============================================
--- LOOP: Damage Spam
--- =============================================
-spawn(function()
-    while wait(0.5) do
-        -- Auto kill all if toggled
-        if dmgSpamToggle and dmgEnabled then
-            local dmg = tonumber(dmgValBox.Text) or 100
-            for _, p in pairs(getAllPlayers()) do
-                local hum = getHum(p)
-                if hum then
-                    R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
-                    R.damageEvent:FireServer(hum, dmg * 5, "Head", {"nil", "Auth", "nil", "nil"})
-                end
-            end
-        end
-    end
-end)
-
--- Notification
-print("=== CarbonResource Exploit Loaded ===")
-print("[*] Damage, Explosion, Utility, ESP hacks ready")
-print("[*] For authorized pentest only")
+print("[*] CarbonResource Exploit Loaded (FIXED)")
