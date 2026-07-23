@@ -1,619 +1,572 @@
---[[
-    CarSpawnerRemote - Authorization Bypass Exploit
-    Vulnerability: No server-side authorization check
-    Impact: CRITICAL - Any player can spawn/delete any vehicle
-]]
+-- CarbonResource Weapon System - Pentest Exploit
+-- For authorized security testing only
+-- Target: DamageEvent, ExplosiveEvent, MedEvent, storeDataEvent, placeC34Event, equipEvent
 
-repeat task.wait() until game:IsLoaded()
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-Local = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
 
--- Cari remote
-local CarRemote = ReplicatedStorage:FindFirstChild("CarSpawnerRemote")
-if not CarRemote then
-    CarRemote = ReplicatedStorage:WaitForChild("CarSpawnerRemote", 10)
-end
-
-if not CarRemote then
-    warn("[!] CarSpawnerRemote tidak ditemukan!")
-    -- List semua remote di ReplicatedStorage
-    print("[DEBUG] Daftar remote di ReplicatedStorage:")
-    for _, child in pairs(ReplicatedStorage:GetChildren()) do
-        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-            print("  -", child.Name, "(" .. child.ClassName .. ")")
+-- Find CarbonResource remote events
+local Carbon = (function()
+    local c = ReplicatedStorage:FindFirstChild("CarbonResource")
+    if not c then
+        for _, v in pairs(ReplicatedStorage:GetChildren()) do
+            if v:FindFirstChild("Events") and v:FindFirstChild("Global") then
+                return v
+            end
         end
     end
-    return
+    return c
+end)()
+
+if not Carbon then
+    return warn("[!] CarbonResource not found")
 end
 
-print("[CAR EXPLOIT] CarSpawnerRemote ditemukan:", CarRemote:GetFullName())
+local Events = Carbon:WaitForChild("Events")
+local Global = Carbon:WaitForChild("Global")
+local GlobalConfig = require(Global:WaitForChild("GlobalConfig"))
 
--- ===== NOTIFICATION =====
-local function ShowNotif(title, text, isSuccess)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "CarExploitNotif"
-    gui.ResetOnSpawn = false
-    gui.DisplayOrder = 9999999
-    gui.Parent = Local:WaitForChild("PlayerGui")
+local R = {
+    equipEvent = Events:WaitForChild("Equip"),
+    updateCharEvent = Events:WaitForChild("UpdateChar"),
+    damageEvent = Events:WaitForChild("DamageEvent"),
+    hitEvent = Events:WaitForChild("HitEvent"),
+    explosiveEvent = Events:WaitForChild("ExplosiveEvent"),
+    nadeEvent = Events:WaitForChild("NadeEvent"),
+    placeC4Event = Events:WaitForChild("PlaceC4"),
+    medEvent = Events:WaitForChild("MedEvent"),
+    storeDataEvent = Events:WaitForChild("StoreData"),
+    createOwnerEvent = Events:WaitForChild("CreateOwner"),
+    resupplyEvent = Events:WaitForChild("ResupplyEvent"),
+    manipEvent = Events:WaitForChild("ManipEvent"),
+    flybyEvent = Events:WaitForChild("flybyEvent"),
+    connectionEvent = Events:WaitForChild("EventConnection"),
+    serverFXEvent = Events:WaitForChild("ServerFXEvent"),
+}
+
+-- Utility
+local function getChar(p)
+    return p and p.Character or nil
+end
+local function getHum(p)
+    local c = getChar(p)
+    return c and c:FindFirstChild("Humanoid") or nil
+end
+local function getRoot(p)
+    local c = getChar(p)
+    return c and c:FindFirstChild("HumanoidRootPart") or nil
+end
+local function getAllPlayers()
+    local list = {}
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and getHum(p) and getHum(p).Health > 0 then
+            table.insert(list, p)
+        end
+    end
+    return list
+end
+
+-- =============================================
+-- BUILD GUI
+-- =============================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CarbonExploit"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 550, 0, 400)
+Main.Position = UDim2.new(0.5, -275, 0.5, -200)
+Main.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+Main.BackgroundTransparency = 0.1
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = true
+Main.Parent = ScreenGui
+
+-- Title bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 1, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "CarbonResource Exploit  |  Authorized Pentest"
+Title.TextColor3 = Color3.fromRGB(0, 255, 100)
+Title.TextSize = 14
+Title.Font = Enum.Font.GothamBold
+Title.Parent = TitleBar
+
+-- Close button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+CloseBtn.TextSize = 16
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = TitleBar
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+-- Tab buttons
+local TabFrame = Instance.new("Frame")
+TabFrame.Size = UDim2.new(1, 0, 0, 30)
+TabFrame.Position = UDim2.new(0, 0, 0, 30)
+TabFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+TabFrame.BorderSizePixel = 0
+TabFrame.Parent = Main
+
+local tabs = {"Damage", "Explosive", "Utility", "ESP", "Settings"}
+local tabButtons = {}
+local tabContents = {}
+local activeTab = "Damage"
+
+for i, name in ipairs(tabs) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 110, 1, 0)
+    btn.Position = UDim2.new(0, (i-1)*110, 0, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btn.BorderSizePixel = 0
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.Gotham
+    btn.Parent = TabFrame
+    tabButtons[name] = btn
     
+    -- Content container for each tab
+    local container = Instance.new("ScrollingFrame")
+    container.Size = UDim2.new(1, -10, 1, -10)
+    container.Position = UDim2.new(0, 5, 0, 5)
+    container.BackgroundTransparency = 1
+    container.BorderSizePixel = 0
+    container.ScrollBarThickness = 4
+    container.Visible = false
+    container.Parent = Instance.new("Frame")
+    container.Parent.Size = UDim2.new(1, 0, 1, -65)
+    container.Parent.Position = UDim2.new(0, 0, 0, 62)
+    container.Parent.BackgroundTransparency = 1
+    container.Parent.Parent = Main
+    tabContents[name] = container
+    
+    btn.MouseButton1Click:Connect(function()
+        activeTab = name
+        for _, b in pairs(tabButtons) do
+            b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            b.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+        btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        btn.TextColor3 = Color3.fromRGB(0, 255, 100)
+        for _, c in pairs(tabContents) do
+            c.Parent.Visible = false
+        end
+        container.Parent.Visible = true
+    end)
+end
+
+-- Helper to create labeled toggle
+local function makeToggle(parent, name, default, callback)
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 55)
-    frame.Position = UDim2.new(0.5, -140, 0, -70)
-    frame.AnchorPoint = Vector2.new(0.5, 0)
-    frame.BackgroundColor3 = isSuccess and Color3.fromRGB(0, 100, 0) or Color3.fromRGB(150, 20, 20)
+    frame.Size = UDim2.new(1, -10, 0, 30)
+    frame.BackgroundTransparency = 1
     frame.BorderSizePixel = 0
-    frame.Parent = gui
+    frame.Parent = parent
     
-    local fCorner = Instance.new("UICorner")
-    fCorner.CornerRadius = UDim.new(0, 6)
-    fCorner.Parent = frame
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 200, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
     
-    local titleLbl = Instance.new("TextLabel")
-    titleLbl.Size = UDim2.new(1, -16, 0, 20)
-    titleLbl.Position = UDim2.new(0, 8, 0, 4)
-    titleLbl.BackgroundTransparency = 1
-    titleLbl.Text = title
-    titleLbl.TextColor3 = Color3.new(1, 1, 1)
-    titleLbl.Font = Enum.Font.GothamBold
-    titleLbl.TextSize = 13
-    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    titleLbl.Parent = frame
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.new(0, 50, 0, 22)
+    toggle.Position = UDim2.new(1, -60, 0, 4)
+    toggle.BackgroundColor3 = default and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)
+    toggle.BorderSizePixel = 0
+    toggle.Text = default and "ON" or "OFF"
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.TextSize = 11
+    toggle.Font = Enum.Font.GothamBold
+    toggle.Parent = frame
     
-    local descLbl = Instance.new("TextLabel")
-    descLbl.Size = UDim2.new(1, -16, 0, 20)
-    descLbl.Position = UDim2.new(0, 8, 0, 26)
-    descLbl.BackgroundTransparency = 1
-    descLbl.Text = text
-    descLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
-    descLbl.Font = Enum.Font.Gotham
-    descLbl.TextSize = 10
-    descLbl.TextXAlignment = Enum.TextXAlignment.Left
-    descLbl.Parent = frame
-    
-    frame:TweenPosition(UDim2.new(0.5, -140, 0, 20), Enum.EasingDirection.Out, Enum.EasingStyle.Back, 0.5, true)
-    
-    task.delay(3, function()
-        frame:TweenPosition(UDim2.new(0.5, -140, 0, -70), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.4, true)
-        task.delay(0.5, function() gui:Destroy() end)
-    end)
-end
-
--- ===== FUNGSI EXPLOIT =====
-local vehicleCache = {}  -- Simpan daftar kendaraan
-
-local function FetchVehicles()
-    print("[CAR] Meminta daftar kendaraan...")
-    local success, err = pcall(function()
-        CarRemote:FireServer("GetVehicles")
-    end)
-    if not success then
-        ShowNotif("❌ GAGAL", "GetVehicles: " .. tostring(err), false)
-    end
-end
-
-local function SpawnVehicle(name)
-    if not name or name == "" then
-        ShowNotif("❌ ERROR", "Nama kendaraan kosong!", false)
-        return
-    end
-    
-    print("[CAR] Spawning vehicle:", name)
-    local success, err = pcall(function()
-        CarRemote:FireServer("SpawnVehicle", name)
+    local state = default
+    toggle.MouseButton1Click:Connect(function()
+        state = not state
+        toggle.BackgroundColor3 = state and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)
+        toggle.Text = state and "ON" or "OFF"
+        if callback then callback(state) end
     end)
     
-    if success then
-        ShowNotif("✅ SPAWNED", name:upper() .. " berhasil di-spawn!", true)
-    else
-        ShowNotif("❌ GAGAL", tostring(err), false)
-    end
-end
-
-local function DeleteVehicle()
-    print("[CAR] Menghapus kendaraan...")
-    local success, err = pcall(function()
-        CarRemote:FireServer("DeleteVehicle")
-    end)
+    -- Add spacing
+    local spacer = Instance.new("Frame")
+    spacer.Size = UDim2.new(1, 0, 0, 5)
+    spacer.BackgroundTransparency = 1
+    spacer.Parent = parent
     
-    if success then
-        ShowNotif("🗑️ DELETED", "Kendaraan dihapus!", true)
-    else
-        ShowNotif("❌ GAGAL", tostring(err), false)
-    end
+    return frame, toggle, function() return state end
 end
 
-local function SpawnAllVehicles()
-    local count = 0
-    for _, v in pairs(vehicleCache) do
-        local ok, _ = pcall(function()
-            CarRemote:FireServer("SpawnVehicle", v)
-        end)
-        if ok then count = count + 1 end
-        task.wait(0.15)
-    end
-    ShowNotif("⚡ BULK SPAWN", count .. " kendaraan di-spawn!", true)
+-- Helper: TextBox with label
+local function makeInput(parent, name, default, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -10, 0, 30)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 150, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+    
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 80, 0, 22)
+    box.Position = UDim2.new(1, -90, 0, 4)
+    box.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    box.BorderSizePixel = 0
+    box.Text = tostring(default)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.TextSize = 12
+    box.Font = Enum.Font.Gotham
+    box.Parent = frame
+    
+    local spacer = Instance.new("Frame")
+    spacer.Size = UDim2.new(1, 0, 0, 5)
+    spacer.BackgroundTransparency = 1
+    spacer.Parent = parent
+    
+    return frame, box
 end
 
--- Intercept server response
-CarRemote.OnClientEvent:Connect(function(action, data1, data2)
-    if action == "RenderList" then
-        -- Simpan cache
-        vehicleCache = {}
-        for _, v in pairs(data1) do
-            table.insert(vehicleCache, v)
+-- Helper: Button
+local function makeButton(parent, name, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 30)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    btn.BorderSizePixel = 0
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(200, 255, 200)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.Gotham
+    btn.Parent = parent
+    
+    local spacer = Instance.new("Frame")
+    spacer.Size = UDim2.new(1, 0, 0, 5)
+    spacer.BackgroundTransparency = 1
+    spacer.Parent = parent
+    
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- =============================================
+-- TAB: DAMAGE
+-- =============================================
+local dmgTab = tabContents["Damage"]
+makeToggle(dmgTab, "Enable Damage Hack", false, function() end)
+local _, _, dmgEnabled = makeToggle(dmgTab, "Mass Kill All Players", false, function() end)
+local _, _, dmgSpamToggle = makeToggle(dmgTab, "Spam Damage (Loop)", false, function() end)
+makeInput(dmgTab, "Damage Value", 100, function() end)
+local _, dmgValBox, _ = nil, nil, nil
+do
+    local f, b = makeInput(dmgTab, "Damage Value", 100)
+    dmgValBox = b
+end
+local _, headDmgBox, _ = nil, nil, nil
+do
+    local f, b = makeInput(dmgTab, "Headshot Mult", 2)
+    headDmgBox = b
+end
+makeButton(dmgTab, "KILL ALL (Single Shot)", function()
+    local dmg = tonumber(dmgValBox.Text) or 100
+    for _, p in pairs(getAllPlayers()) do
+        local hum = getHum(p)
+        if hum then
+            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+            R.damageEvent:FireServer(hum, dmg * 5, "Head", {"nil", "Auth", "nil", "nil"})
         end
-        print("[CAR] Daftar kendaraan diterima:", #vehicleCache, "kendaraan")
-        ShowNotif("📋 VEHICLES", #vehicleCache .. " kendaraan tersedia", true)
-        
-        -- Update GUI vehicle list
-        UpdateVehicleList(vehicleCache)
-        
-    elseif action == "Notification" then
-        ShowNotif(data1, data2, data1 == "BERHASIL")
+    end
+end)
+makeButton(dmgTab, "CRIT: Deal Damage to Specific Player", function()
+    local target = nil
+    for _, p in pairs(getAllPlayers()) do
+        target = p
+        break
+    end
+    if target then
+        local hum = getHum(target)
+        if hum then
+            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+            R.damageEvent:FireServer(hum, 999999, "Head", {"nil", "Auth", "nil", "nil"})
+        end
+    end
+end)
+makeButton(dmgTab, "CRIT: Bypass Armor (Limb Shot)", function()
+    local dmg = tonumber(dmgValBox.Text) or 100
+    for _, p in pairs(getAllPlayers()) do
+        local hum = getHum(p)
+        if hum then
+            R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+            R.damageEvent:FireServer(hum, dmg, "Left Leg", {"nil", "Auth", "nil", "nil"})
+        end
+    end
+end)
+makeButton(dmgTab, "HEAL ALL PLAYERS (Exploit Med)", function()
+    -- Possibly the medEvent heals without validation
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            p = LocalPlayer
+        end
+        R.medEvent:FireServer(true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "Auth")
     end
 end)
 
--- ===== BUILD GUI =====
-print("[CAR EXPLOIT] Membangun GUI...")
+-- =============================================
+-- TAB: EXPLOSIVE
+-- =============================================
+local expTab = tabContents["Explosive"]
+makeToggle(expTab, "Enable Explosion Hack", false, function() end)
+local _, expRadiusBox, _ = nil, nil, nil
+do local f, b = makeInput(expTab, "Blast Radius", 50) expRadiusBox = b end
+local _, expPressureBox, _ = nil, nil, nil
+do local f, b = makeInput(expTab, "Blast Pressure", 500000) expPressureBox = b end
+local _, expDJBox, _ = nil, nil, nil
+do local f, b = makeInput(expTab, "Destroy Joints Rad", 50) expDJBox = b end
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "CarExploitGUI"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999999
-screenGui.Parent = Local:WaitForChild("PlayerGui")
+-- Placeholder for explosion type
+local expType = "Blast" -- C4 ExplosionType from globalConfig
 
--- Toggle Button
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 90, 0, 32)
-toggleBtn.Position = UDim2.new(1, -100, 0, 50)
-toggleBtn.AnchorPoint = Vector2.new(1, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-toggleBtn.Text = "🚗 EXPLOIT"
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-toggleBtn.TextSize = 10
-toggleBtn.Parent = screenGui
-
-local tCorner = Instance.new("UICorner")
-tCorner.CornerRadius = UDim.new(0, 6)
-tCorner.Parent = toggleBtn
-
-local tStroke = Instance.new("UIStroke")
-tStroke.Color = Color3.fromRGB(60, 120, 200)
-tStroke.Thickness = 1
-tStroke.Parent = toggleBtn
-
--- Main Panel
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 440)
-mainFrame.Position = UDim2.new(1.5, 0, 0.5, 0)
-mainFrame.AnchorPoint = Vector2.new(1, 0.5)
-mainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
-mainFrame.BorderSizePixel = 0
-mainFrame.Visible = false
-mainFrame.Parent = screenGui
-
-local mCorner = Instance.new("UICorner")
-mCorner.CornerRadius = UDim.new(0, 10)
-mCorner.Parent = mainFrame
-
-local mStroke = Instance.new("UIStroke")
-mStroke.Color = Color3.fromRGB(60, 120, 200)
-mStroke.Thickness = 1.5
-mStroke.Parent = mainFrame
-
--- Header
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 40)
-header.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-header.BorderSizePixel = 0
-header.Parent = mainFrame
-
-local hCorner = Instance.new("UICorner")
-hCorner.CornerRadius = UDim.new(0, 10)
-hCorner.Parent = header
-
-local headerTitle = Instance.new("TextLabel")
-headerTitle.Size = UDim2.new(1, -50, 1, 0)
-headerTitle.Position = UDim2.new(0, 12, 0, 0)
-headerTitle.BackgroundTransparency = 1
-headerTitle.Text = "🚗 GARASI EXPLOIT"
-headerTitle.Font = Enum.Font.GothamBold
-headerTitle.TextColor3 = Color3.new(1, 1, 1)
-headerTitle.TextSize = 14
-headerTitle.TextXAlignment = Enum.TextXAlignment.Left
-headerTitle.Parent = header
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 28, 0, 28)
-closeBtn.Position = UDim2.new(1, -34, 0, 6)
-closeBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
-closeBtn.Text = "✕"
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextColor3 = Color3.new(1, 1, 1)
-closeBtn.TextSize = 14
-closeBtn.Parent = header
-
-local cCorner = Instance.new("UICorner")
-cCorner.CornerRadius = UDim.new(0, 4)
-cCorner.Parent = closeBtn
-
--- Content
-local content = Instance.new("Frame")
-content.Size = UDim2.new(1, -16, 1, -48)
-content.Position = UDim2.new(0, 8, 0, 44)
-content.BackgroundTransparency = 1
-content.BorderSizePixel = 0
-content.Parent = mainFrame
-
--- Status / Info
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, 0, 0, 22)
-statusLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-statusLabel.BackgroundTransparency = 0.3
-statusLabel.Text = "● Klik FETCH untuk ambil daftar kendaraan"
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextSize = 10
-statusLabel.Parent = content
-
-local sCorner = Instance.new("UICorner")
-sCorner.CornerRadius = UDim.new(0, 4)
-sCorner.Parent = statusLabel
-
--- Vehicle list label
-local listLabel = Instance.new("TextLabel")
-listLabel.Size = UDim2.new(1, 0, 0, 18)
-listLabel.Position = UDim2.new(0, 0, 0, 28)
-listLabel.BackgroundTransparency = 1
-listLabel.Text = "📋 DAFTAR KENDARAAN"
-listLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-listLabel.Font = Enum.Font.GothamBold
-listLabel.TextSize = 11
-listLabel.TextXAlignment = Enum.TextXAlignment.Left
-listLabel.Parent = content
-
--- Vehicle list ScrollingFrame
-local vehicleList = Instance.new("ScrollingFrame")
-vehicleList.Size = UDim2.new(1, 0, 0, 130)
-vehicleList.Position = UDim2.new(0, 0, 0, 48)
-vehicleList.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
-vehicleList.BackgroundTransparency = 0.2
-vehicleList.BorderSizePixel = 0
-vehicleList.ScrollBarThickness = 4
-vehicleList.ScrollBarImageColor3 = Color3.fromRGB(60, 120, 200)
-vehicleList.CanvasSize = UDim2.new(0, 0, 0, 0)
-vehicleList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-vehicleList.Parent = content
-
-local vlCorner = Instance.new("UICorner")
-vlCorner.CornerRadius = UDim.new(0, 6)
-vlCorner.Parent = vehicleList
-
--- Manual input section
-local manualLabel = Instance.new("TextLabel")
-manualLabel.Size = UDim2.new(1, 0, 0, 18)
-manualLabel.Position = UDim2.new(0, 0, 0, 184)
-manualLabel.BackgroundTransparency = 1
-manualLabel.Text = "⚙ MANUAL SPAWN"
-manualLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-manualLabel.Font = Enum.Font.GothamBold
-manualLabel.TextSize = 11
-manualLabel.TextXAlignment = Enum.TextXAlignment.Left
-manualLabel.Parent = content
-
-local vehicleNameBox = Instance.new("TextBox")
-vehicleNameBox.Size = UDim2.new(0.7, -4, 0, 30)
-vehicleNameBox.Position = UDim2.new(0, 0, 0, 206)
-vehicleNameBox.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
-vehicleNameBox.BackgroundTransparency = 0.1
-vehicleNameBox.TextColor3 = Color3.new(1, 1, 1)
-vehicleNameBox.PlaceholderText = "Nama kendaraan..."
-vehicleNameBox.PlaceholderColor3 = Color3.fromRGB(90, 90, 100)
-vehicleNameBox.Text = ""
-vehicleNameBox.Font = Enum.Font.Gotham
-vehicleNameBox.TextSize = 12
-vehicleNameBox.ClearTextOnFocus = false
-vehicleNameBox.Parent = content
-
-local vnCorner = Instance.new("UICorner")
-vnCorner.CornerRadius = UDim.new(0, 4)
-vnCorner.Parent = vehicleNameBox
-
-local manualSpawnBtn = Instance.new("TextButton")
-manualSpawnBtn.Size = UDim2.new(0.27, -4, 0, 30)
-manualSpawnBtn.Position = UDim2.new(0.72, 0, 0, 206)
-manualSpawnBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 30)
-manualSpawnBtn.Text = "SPAWN"
-manualSpawnBtn.Font = Enum.Font.GothamBold
-manualSpawnBtn.TextColor3 = Color3.new(1, 1, 1)
-manualSpawnBtn.TextSize = 10
-manualSpawnBtn.Parent = content
-
-local msCorner = Instance.new("UICorner")
-msCorner.CornerRadius = UDim.new(0, 4)
-msCorner.Parent = manualSpawnBtn
-
--- Action buttons
-local actionLabel = Instance.new("TextLabel")
-actionLabel.Size = UDim2.new(1, 0, 0, 18)
-actionLabel.Position = UDim2.new(0, 0, 0, 244)
-actionLabel.BackgroundTransparency = 1
-actionLabel.Text = "⚡ QUICK ACTIONS"
-actionLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-actionLabel.Font = Enum.Font.GothamBold
-actionLabel.TextSize = 11
-actionLabel.TextXAlignment = Enum.TextXAlignment.Left
-actionLabel.Parent = content
-
-local fetchBtn = Instance.new("TextButton")
-fetchBtn.Size = UDim2.new(1, 0, 0, 30)
-fetchBtn.Position = UDim2.new(0, 0, 0, 266)
-fetchBtn.BackgroundColor3 = Color3.fromRGB(40, 60, 120)
-fetchBtn.Text = "📥 FETCH VEHICLES (GetVehicles)"
-fetchBtn.Font = Enum.Font.GothamBold
-fetchBtn.TextColor3 = Color3.new(1, 1, 1)
-fetchBtn.TextSize = 10
-fetchBtn.Parent = content
-
-local fbCorner = Instance.new("UICorner")
-fbCorner.CornerRadius = UDim.new(0, 6)
-fbCorner.Parent = fetchBtn
-
-local spawnAllBtn = Instance.new("TextButton")
-spawnAllBtn.Size = UDim2.new(0.48, -3, 0, 30)
-spawnAllBtn.Position = UDim2.new(0, 0, 0, 302)
-spawnAllBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 40)
-spawnAllBtn.Text = "🚗 SPAWN ALL"
-spawnAllBtn.Font = Enum.Font.GothamBold
-spawnAllBtn.TextColor3 = Color3.new(1, 1, 1)
-spawnAllBtn.TextSize = 10
-spawnAllBtn.Parent = content
-
-local saCorner = Instance.new("UICorner")
-saCorner.CornerRadius = UDim.new(0, 6)
-saCorner.Parent = spawnAllBtn
-
-local deleteBtn = Instance.new("TextButton")
-deleteBtn.Size = UDim2.new(0.48, -3, 0, 30)
-deleteBtn.Position = UDim2.new(0.5, 3, 0, 302)
-deleteBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
-deleteBtn.Text = "🗑️ DELETE VEHICLE"
-deleteBtn.Font = Enum.Font.GothamBold
-deleteBtn.TextColor3 = Color3.new(1, 1, 1)
-deleteBtn.TextSize = 10
-deleteBtn.Parent = content
-
-local dbCorner = Instance.new("UICorner")
-dbCorner.CornerRadius = UDim.new(0, 6)
-dbCorner.Parent = deleteBtn
-
--- Auto-refresh toggle
-local autoRefreshBtn = Instance.new("TextButton")
-autoRefreshBtn.Size = UDim2.new(1, 0, 0, 26)
-autoRefreshBtn.Position = UDim2.new(0, 0, 0, 340)
-autoRefreshBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-autoRefreshBtn.Text = "🔄 AUTO-REFRESH: OFF"
-autoRefreshBtn.Font = Enum.Font.GothamBold
-autoRefreshBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
-autoRefreshBtn.TextSize = 9
-autoRefreshBtn.Parent = content
-
-local arCorner = Instance.new("UICorner")
-arCorner.CornerRadius = UDim.new(0, 4)
-arCorner.Parent = autoRefreshBtn
-
--- Spam mode
-local spamSpawnBtn = Instance.new("TextButton")
-spamSpawnBtn.Size = UDim2.new(1, 0, 0, 26)
-spamSpawnBtn.Position = UDim2.new(0, 0, 0, 372)
-spamSpawnBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
-spamSpawnBtn.Text = "⚠️ SPAM SPAWN ALL (10x)"
-spamSpawnBtn.Font = Enum.Font.GothamBold
-spamSpawnBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
-spamSpawnBtn.TextSize = 9
-spamSpawnBtn.Parent = content
-
-local ssCorner = Instance.new("UICorner")
-ssCorner.CornerRadius = UDim.new(0, 4)
-ssCorner.Parent = spamSpawnBtn
-
--- ===== FUNGSI UPDATE LIST =====
-function UpdateVehicleList(vehicles)
-    -- Clear existing
-    for _, child in pairs(vehicleList:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
+makeButton(expTab, "NUKE ALL PLAYERS (Explosion at Each)", function()
+    local radius = tonumber(expRadiusBox.Text) or 50
+    local pressure = tonumber(expPressureBox.Text) or 500000
+    local dj = tonumber(expDJBox.Text) or 50
+    for _, p in pairs(getAllPlayers()) do
+        local root = getRoot(p)
+        if root then
+            R.explosiveEvent:FireServer(nil, root.Position, pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
         end
     end
-    
-    if not vehicles or #vehicles == 0 then
-        local empty = Instance.new("TextLabel")
-        empty.Size = UDim2.new(1, 0, 0, 30)
-        empty.BackgroundTransparency = 1
-        empty.Text = "Tidak ada kendaraan. Klik FETCH"
-        empty.TextColor3 = Color3.fromRGB(100, 100, 110)
-        empty.Font = Enum.Font.Gotham
-        empty.TextSize = 11
-        empty.Parent = vehicleList
-        return
-    end
-    
-    local yPos = 0
-    for _, vehicleName in pairs(vehicles) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -6, 0, 30)
-        btn.Position = UDim2.new(0, 3, 0, yPos)
-        btn.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
-        btn.BackgroundTransparency = 0.2
-        btn.Text = ""
-        btn.BorderSizePixel = 0
-        btn.Parent = vehicleList
-        
-        local bCorner = Instance.new("UICorner")
-        bCorner.CornerRadius = UDim.new(0, 4)
-        bCorner.Parent = btn
-        
-        local nameLabel = Instance.new("TextLabel")
-        nameLabel.Size = UDim2.new(1, -10, 1, 0)
-        nameLabel.Position = UDim2.new(0, 8, 0, 0)
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Text = "🚙 " .. vehicleName:upper()
-        nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-        nameLabel.Font = Enum.Font.GothamMedium
-        nameLabel.TextSize = 11
-        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-        nameLabel.Parent = btn
-        
-        local spawnIcon = Instance.new("TextLabel")
-        spawnIcon.Size = UDim2.new(0, 30, 1, 0)
-        spawnIcon.Position = UDim2.new(1, -30, 0, 0)
-        spawnIcon.BackgroundTransparency = 1
-        spawnIcon.Text = "▶"
-        spawnIcon.TextColor3 = Color3.fromRGB(60, 180, 60)
-        spawnIcon.Font = Enum.Font.GothamBold
-        spawnIcon.TextSize = 14
-        spawnIcon.Parent = btn
-        
-        -- Hover
-        btn.MouseEnter:Connect(function()
-            btn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-        end)
-        btn.MouseLeave:Connect(function()
-            btn.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
-        end)
-        
-        -- Click to spawn
-        btn.MouseButton1Click:Connect(function()
-            SpawnVehicle(vehicleName)
-        end)
-        
-        yPos = yPos + 32
-    end
-    
-    vehicleList.CanvasSize = UDim2.new(0, 0, 0, yPos + 4)
-end
+end)
 
--- ===== BIND EVENTS =====
--- Toggle panel
-local panelOpen = false
-toggleBtn.MouseButton1Click:Connect(function()
-    panelOpen = not panelOpen
-    mainFrame.Visible = panelOpen
-    mainFrame:TweenPosition(
-        panelOpen and UDim2.new(1, -15, 0.5, 0) or UDim2.new(1.5, 0, 0.5, 0),
-        Enum.EasingDirection.Out,
-        Enum.EasingStyle.Quart,
-        0.4,
-        true
+makeButton(expTab, "NUKE AT CURSOR", function()
+    local radius = tonumber(expRadiusBox.Text) or 50
+    local pressure = tonumber(expPressureBox.Text) or 500000
+    local dj = tonumber(expDJBox.Text) or 50
+    local pos = Mouse.Hit.p
+    R.explosiveEvent:FireServer(nil, pos, pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
+end)
+
+makeButton(expTab, "NUKE AT CURSOR x5 (Stack)", function()
+    local radius = tonumber(expRadiusBox.Text) or 50
+    local pressure = tonumber(expPressureBox.Text) or 500000
+    local dj = tonumber(expDJBox.Text) or 50
+    local pos = Mouse.Hit.p
+    for i = 1, 5 do
+        R.explosiveEvent:FireServer(nil, pos + Vector3.new(math.random(-5,5), math.random(-5,5), math.random(-5,5)), pressure, radius, dj, expType, nil, nil, nil, nil, nil, nil, "Auth", nil)
+    end
+end)
+
+makeButton(expTab, "Test: Nade Explosion", function()
+    -- Mimics nadeEvent pattern
+    local root = getRoot(LocalPlayer)
+    if root then
+        local pos = root.Position + Vector3.new(0, 10, 0)
+        R.nadeEvent:FireServer(LocalPlayer, pos, Vector3.new(0, -50, 0))
+        wait(5)
+        R.explosiveEvent:FireServer(nil, pos, GlobalConfig.BlastPressue or 500000, GlobalConfig.BlastRadius or 30, GlobalConfig.DestroyJointRadius or 20, GlobalConfig.ExplosionType or "Blast", nil, nil, nil, nil, nil, nil, "Auth", nil)
+    end
+end)
+
+-- =============================================
+-- TAB: UTILITY
+-- =============================================
+local utilTab = tabContents["Utility"]
+makeToggle(utilTab, "Enable Utility Hacks", false, function() end)
+
+makeButton(utilTab, "HEAL SELF (MedEvent Spam x10)", function()
+    for i = 1, 10 do
+        R.medEvent:FireServer(true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "Auth")
+        wait(0.1)
+    end
+end)
+
+makeButton(utilTab, "RESUPPLY (Ammo Refill)", function()
+    -- The resupplyEvent is OnClientEvent, but we can try storeData manipulation
+    R.storeDataEvent:InvokeServer("Store", "ToolName", 9999, 99999, 99, 1, 0, 0, true, false, "Auth", false, false, false, 60, 30, 0, false, {CFrame.new(), CFrame.new()})
+end)
+
+makeButton(utilTab, "STORE DATA - MAX AMMO", function()
+    local success, ammo, stored, expl, firemode, canshoot = R.storeDataEvent:InvokeServer("Retrieve", "AnyTool", 30, 30*4, 3, 0, 1, 1, nil, nil, "Auth")
+    -- Then store with inflated values
+    R.storeDataEvent:InvokeServer("Store", "AnyTool", 9999, 99999, 99, 0, 0, 0, true, false, "Auth", false, false, false, 60, 30, 0, false, {CFrame.new(), CFrame.new()})
+end)
+
+makeButton(utilTab, "PLACE C4 ON ALL PLAYERS", function()
+    for _, p in pairs(getAllPlayers()) do
+        local root = getRoot(p)
+        if root then
+            local pos = root.Position
+            local _, c4 = pcall(R.placeC4Event.InvokeServer, R.placeC4Event, pos, Vector3.new(0, 1, 0), 0, "Auth", Vector3.new(0, 1, 0), root)
+        end
+    end
+end)
+
+makeButton(utilTab, "EQUIP ANY WEAPON (Bypass)", function()
+    -- Try equipping without having the tool in backpack
+    local weaponName = "M4A1" -- change as needed
+    R.equipEvent:FireServer(true, "Auth", weaponName, 
+        CFrame.new(0.5, -0.5, -1), 
+        CFrame.new(-0.5, -0.5, -1),
+        CFrame.new(0, 0, -1.5),
+        CFrame.new(),
+        false, false, false, CFrame.new()
     )
-    
-    if panelOpen then
-        toggleBtn.Text = "🚗 CLOSE"
-        -- Auto fetch
-        task.delay(0.5, function()
-            FetchVehicles()
+end)
+
+makeButton(utilTab, "TOGGLE NVG / LASER / FLASHLIGHT", function()
+    R.manipEvent:FireServer(true, "Laser", nil, nil, nil, nil, nil, nil, nil, "Auth")
+    wait(0.5)
+    R.manipEvent:FireServer(true, "FlashLight", nil, nil, nil, nil, nil, nil, nil, "Auth")
+end)
+
+-- =============================================
+-- TAB: ESP
+-- =============================================
+local espTab = tabContents["ESP"]
+local espEnabled = false
+local espConn = nil
+
+makeToggle(espTab, "Enable ESP", false, function(state)
+    espEnabled = state
+    if state then
+        -- Clean old ESP
+        for _, v in pairs(workspace:GetChildren()) do
+            if v.Name:match("^ESP_") then v:Destroy() end
+        end
+        espConn = RunService.RenderStepped:Connect(function()
+            if not espEnabled then espConn:Disconnect() return end
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then
+                    local c = getChar(p)
+                    local root = getRoot(p)
+                    if c and root then
+                        local espName = workspace:FindFirstChild("ESP_" .. p.Name)
+                        if not espName then
+                            espName = Instance.new("BillboardGui")
+                            espName.Name = "ESP_" .. p.Name
+                            espName.AlwaysOnTop = true
+                            espName.Size = UDim2.new(0, 200, 0, 50)
+                            espName.Adornee = root
+                            espName.Parent = workspace
+                            
+                            local nameLabel = Instance.new("TextLabel")
+                            nameLabel.Size = UDim2.new(1, 0, 0.6, 0)
+                            nameLabel.BackgroundTransparency = 1
+                            nameLabel.Text = p.Name .. " [" .. math.floor((Camera.CFrame.Position - root.Position).magnitude) .. "m]"
+                            nameLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+                            nameLabel.TextSize = 13
+                            nameLabel.Font = Enum.Font.GothamBold
+                            nameLabel.TextStrokeTransparency = 0.5
+                            nameLabel.Parent = espName
+                            
+                            local hpLabel = Instance.new("TextLabel")
+                            hpLabel.Size = UDim2.new(1, 0, 0.4, 0)
+                            hpLabel.Position = UDim2.new(0, 0, 0.6, 0)
+                            hpLabel.BackgroundTransparency = 1
+                            local hum = getHum(p)
+                            hpLabel.Text = hum and math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth) or "HP?"
+                            hpLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                            hpLabel.TextSize = 11
+                            hpLabel.Font = Enum.Font.Gotham
+                            hpLabel.TextStrokeTransparency = 0.5
+                            hpLabel.Parent = espName
+                        else
+                            local nameLabel = espName:FindFirstChildOfClass("TextLabel")
+                            if nameLabel then
+                                nameLabel.Text = p.Name .. " [" .. math.floor((Camera.CFrame.Position - root.Position).magnitude) .. "m]"
+                            end
+                            local hpLabel = espName:FindFirstChildOfClass("TextLabel")
+                            if hpLabel then
+                                local hum = getHum(p)
+                                if hum then
+                                    if hpLabel ~= nameLabel then
+                                        hpLabel.Text = math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end)
     else
-        toggleBtn.Text = "🚗 EXPLOIT"
+        if espConn then espConn:Disconnect() espConn = nil end
+        for _, v in pairs(workspace:GetChildren()) do
+            if v.Name:match("^ESP_") then v:Destroy() end
+        end
     end
 end)
 
-closeBtn.MouseButton1Click:Connect(function()
-    panelOpen = false
-    mainFrame.Visible = false
-    toggleBtn.Text = "🚗 EXPLOIT"
+-- =============================================
+-- TAB: SETTINGS
+-- =============================================
+local setTab = tabContents["Settings"]
+makeButton(setTab, "DESTROY GUI", function() ScreenGui:Destroy() end)
+makeButton(setTab, "RESET ALL TOGGLES", function()
+    -- ScreenGui:Destroy() and re-run would reset
 end)
 
--- Key P toggle
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.P then
-        toggleBtn.MouseButton1Click:Fire()
-    end
-end)
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 0, 50)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Ready. Authorized pentest - CarbonResource Weapon System"
+statusLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Parent = setTab
 
--- Fetch button
-fetchBtn.MouseButton1Click:Connect(FetchVehicles)
+-- Auto arm first tab
+tabButtons["Damage"].BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+tabButtons["Damage"].TextColor3 = Color3.fromRGB(0, 255, 100)
+tabContents["Damage"].Parent.Visible = true
 
--- Manual spawn
-manualSpawnBtn.MouseButton1Click:Connect(function()
-    SpawnVehicle(vehicleNameBox.Text)
-end)
-
-vehicleNameBox.FocusLost:Connect(function(enter)
-    if enter then SpawnVehicle(vehicleNameBox.Text) end
-end)
-
--- Spawn all
-spawnAllBtn.MouseButton1Click:Connect(function()
-    if #vehicleCache == 0 then
-        ShowNotif("⚠️ WARNING", "Ambil daftar kendaraan dulu!", false)
-        return
-    end
-    SpawnAllVehicles()
-end)
-
--- Delete vehicle
-deleteBtn.MouseButton1Click:Connect(DeleteVehicle)
-
--- Auto refresh toggle
-local autoRefresh = false
-local autoRefreshThread = nil
-autoRefreshBtn.MouseButton1Click:Connect(function()
-    autoRefresh = not autoRefresh
-    autoRefreshBtn.Text = autoRefresh and "🔄 AUTO-REFRESH: ON" or "🔄 AUTO-REFRESH: OFF"
-    autoRefreshBtn.BackgroundColor3 = autoRefresh and Color3.fromRGB(30, 80, 40) or Color3.fromRGB(40, 40, 60)
-    autoRefreshBtn.TextColor3 = autoRefresh and Color3.fromRGB(180, 255, 180) or Color3.fromRGB(180, 180, 180)
-    
-    if autoRefresh then
-        autoRefreshThread = task.spawn(function()
-            while autoRefresh and screenGui and screenGui.Parent do
-                task.wait(10)
-                pcall(function() CarRemote:FireServer("GetVehicles") end)
-            end
-        end)
-    end
-end)
-
--- Spam spawn
-spamSpawnBtn.MouseButton1Click:Connect(function()
-    if #vehicleCache == 0 then
-        ShowNotif("⚠️ WARNING", "Ambil daftar kendaraan dulu!", false)
-        return
-    end
-    
-    spamSpawnBtn.Text = "⏳ SPAWNING..."
-    spamSpawnBtn.BackgroundTransparency = 0.5
-    
-    task.spawn(function()
-        local total = 0
-        for i = 1, 10 do
-            for _, v in pairs(vehicleCache) do
-                pcall(function() CarRemote:FireServer("SpawnVehicle", v) end)
-                total = total + 1
-                task.wait(0.05)
+-- =============================================
+-- LOOP: Damage Spam
+-- =============================================
+spawn(function()
+    while wait(0.5) do
+        -- Auto kill all if toggled
+        if dmgSpamToggle and dmgEnabled then
+            local dmg = tonumber(dmgValBox.Text) or 100
+            for _, p in pairs(getAllPlayers()) do
+                local hum = getHum(p)
+                if hum then
+                    R.createOwnerEvent:FireServer(hum, nil, nil, nil, nil, nil, nil, nil, "Auth")
+                    R.damageEvent:FireServer(hum, dmg * 5, "Head", {"nil", "Auth", "nil", "nil"})
+                end
             end
         end
-        ShowNotif("⚡ SPAM DONE", total .. " kendaraan di-spawn!", true)
-        spamSpawnBtn.Text = "⚠️ SPAM SPAWN ALL (10x)"
-        spamSpawnBtn.BackgroundTransparency = 0
-    end)
+    end
 end)
 
-print("========================================")
-print("  CAR SPAWNER EXPLOIT READY")
-print("  Remote:", CarRemote:GetFullName())
-print("  Klik tombol '🚗 EXPLOIT' di pojok kanan")
-print("  Atau tekan P untuk toggle")
-print("========================================")
-
--- Initial fetch
-task.delay(1, function()
-    print("[CAR] Auto-fetch on load...")
-    CarRemote:FireServer("GetVehicles")
-end)
+-- Notification
+print("=== CarbonResource Exploit Loaded ===")
+print("[*] Damage, Explosion, Utility, ESP hacks ready")
+print("[*] For authorized pentest only")
